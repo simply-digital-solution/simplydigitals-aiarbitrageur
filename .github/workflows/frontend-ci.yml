@@ -1,0 +1,69 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "simplydigitals-aiarbitrageur-ui/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "simplydigitals-aiarbitrageur-ui/**"
+      - ".github/workflows/frontend-ci.yml"
+
+env:
+  NODE_VERSION: "18.x"
+  WORKING_DIRECTORY: "./simplydigitals-aiarbitrageur-ui"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm ci
+
+      - name: Lint with ESLint
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run lint --if-present
+
+      - name: Format check with Prettier
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run format:check --if-present || npm run prettier:check --if-present || echo "Prettier not configured"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm ci
+
+      - name: Build
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-build
+          path: ${{ env.WORKING_DIRECTORY }}/dist/

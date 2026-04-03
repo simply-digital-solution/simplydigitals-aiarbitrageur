@@ -1,11 +1,11 @@
-import { useState } from "react";
-import WatchlistSidebar from "./components/WatchlistSidebar";
-import ChartGrid from "./components/ChartGrid";
-import TradePanel from "./components/TradePanel";
-import PortfolioSummary from "./components/PortfolioSummary";
+import { useState } from 'react';
+import WatchlistSidebar from './components/WatchlistSidebar';
+import ChartGrid from './components/ChartGrid';
+import TradePanel from './components/TradePanel';
+import PortfolioSummary from './components/PortfolioSummary';
 
 export default function App() {
-  const [selectedSymbols, setSelectedSymbols] = useState(["AAPL", "MSFT"]);
+  const [selectedSymbols, setSelectedSymbols] = useState(['AAPL', 'MSFT']);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   return (
@@ -15,18 +15,14 @@ export default function App() {
         <div className="mx-auto max-w-[1600px]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.35em] text-sky-400">
-                AI Arbitrageur
-              </p>
-              <h1 className="text-2xl font-semibold sm:text-3xl">
-                Intraday Trading Dashboard
-              </h1>
+              <p className="text-xs uppercase tracking-[0.35em] text-sky-400">AI Arbitrageur</p>
+              <h1 className="text-2xl font-semibold sm:text-3xl">Intraday Trading Dashboard</h1>
             </div>
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm lg:hidden"
             >
-              {sidebarOpen ? "Hide" : "Show"} Watchlist
+              {sidebarOpen ? 'Hide' : 'Show'} Watchlist
             </button>
           </div>
         </div>

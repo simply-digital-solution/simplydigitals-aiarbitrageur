@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
-import axios from "axios";
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
   const [watchlist, setWatchlist] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [prices, setPrices] = useState({});
   const [loading, setLoading] = useState(false);
@@ -13,11 +13,11 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
   // Default watchlist (would come from API in production)
   useEffect(() => {
     const defaultWatchlist = [
-      { symbol: "AAPL", name: "Apple Inc." },
-      { symbol: "MSFT", name: "Microsoft Corporation" },
-      { symbol: "TSLA", name: "Tesla Inc." },
-      { symbol: "GOOGL", name: "Alphabet Inc." },
-      { symbol: "AMZN", name: "Amazon.com Inc." },
+      { symbol: 'AAPL', name: 'Apple Inc.' },
+      { symbol: 'MSFT', name: 'Microsoft Corporation' },
+      { symbol: 'TSLA', name: 'Tesla Inc.' },
+      { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+      { symbol: 'AMZN', name: 'Amazon.com Inc.' },
     ];
     setWatchlist(defaultWatchlist);
 
@@ -31,9 +31,7 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
       const priceData = {};
       for (const symbol of symbols) {
         try {
-          const resp = await axios.get(
-            `${API_BASE_URL}/prices/${symbol}/intraday-1min?limit=1`,
-          );
+          const resp = await axios.get(`${API_BASE_URL}/prices/${symbol}/intraday-1min?limit=1`);
           if (resp.data && resp.data.length > 0) {
             const latest = resp.data[0];
             priceData[symbol] = latest.close;
@@ -45,7 +43,7 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
       }
       setPrices(priceData);
     } catch (err) {
-      console.error("Error fetching prices:", err);
+      console.error('Error fetching prices:', err);
     }
   };
 
@@ -64,7 +62,7 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
       });
       setSearchResults(resp.data.tickers || []);
     } catch (err) {
-      console.error("Error searching tickers:", err);
+      console.error('Error searching tickers:', err);
       setSearchResults([]);
     }
     setLoading(false);
@@ -76,7 +74,7 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
       setWatchlist([...watchlist, ticker]);
       fetchPrices([ticker.symbol]);
     }
-    setSearchQuery("");
+    setSearchQuery('');
     setSearchResults([]);
   };
 
@@ -101,9 +99,7 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
     <div className="flex flex-col gap-4 p-4">
       {/* Header */}
       <div>
-        <p className="text-xs uppercase tracking-[0.35em] text-sky-400">
-          Watchlist
-        </p>
+        <p className="text-xs uppercase tracking-[0.35em] text-sky-400">Watchlist</p>
         <h2 className="mt-2 text-lg font-semibold">Search & Select</h2>
       </div>
 
@@ -127,24 +123,18 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
                 className="w-full text-left rounded-lg bg-slate-900 px-2 py-2 text-sm hover:bg-sky-900 transition"
               >
                 <span className="font-medium">{ticker.symbol}</span>
-                <span className="text-xs text-slate-400 ml-2">
-                  {ticker.name}
-                </span>
+                <span className="text-xs text-slate-400 ml-2">{ticker.name}</span>
               </button>
             ))}
           </div>
         )}
 
-        {loading && (
-          <div className="text-xs text-slate-400 p-2">Searching...</div>
-        )}
+        {loading && <div className="text-xs text-slate-400 p-2">Searching...</div>}
       </div>
 
       {/* Watchlist Items */}
       <div className="rounded-2xl border border-slate-700 bg-slate-950/80 p-3 flex-1 overflow-y-auto">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">
-          Your Tickers
-        </p>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">Your Tickers</p>
         {watchlist.length === 0 ? (
           <div className="text-xs text-slate-500 p-2">No tickers added</div>
         ) : (
@@ -158,19 +148,15 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
                   key={ticker.symbol}
                   className={`flex items-center justify-between rounded-lg px-2 py-2 transition cursor-pointer ${
                     isSelected
-                      ? "bg-sky-900/40 border border-sky-600"
-                      : "bg-slate-900 hover:bg-slate-800"
+                      ? 'bg-sky-900/40 border border-sky-600'
+                      : 'bg-slate-900 hover:bg-slate-800'
                   }`}
                   onClick={() => handleToggleSymbol(ticker.symbol)}
                   role="button"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">
-                      {ticker.symbol}
-                    </div>
-                    <div className="text-xs text-slate-500 truncate">
-                      ${price.toFixed(2)}
-                    </div>
+                    <div className="font-medium text-sm truncate">{ticker.symbol}</div>
+                    <div className="text-xs text-slate-500 truncate">${price.toFixed(2)}</div>
                   </div>
                   <button
                     onClick={(e) => {
@@ -191,8 +177,8 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
       {/* Selected Count */}
       {selectedSymbols.length > 0 && (
         <div className="rounded-lg bg-sky-900/20 border border-sky-600 px-3 py-2 text-xs text-sky-200">
-          {selectedSymbols.length} ticker{selectedSymbols.length > 1 ? "s" : ""}{" "}
-          selected for charting
+          {selectedSymbols.length} ticker{selectedSymbols.length > 1 ? 's' : ''} selected for
+          charting
         </div>
       )}
     </div>
