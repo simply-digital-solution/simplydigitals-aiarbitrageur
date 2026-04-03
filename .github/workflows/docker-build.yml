@@ -1,4 +1,4 @@
-name: Docker Build & Push
+name: Docker Build & Deploy
 
 on:
   push:
@@ -18,6 +18,7 @@ env:
 
 jobs:
   build-backend:
+    name: Build Backend Image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,7 +31,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -53,13 +53,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./simplydigitals-aiarbitrageur-api
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-frontend:
+    name: Build Frontend Image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -72,7 +73,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -96,8 +96,34 @@ jobs:
         with:
           context: ./simplydigitals-aiarbitrageur-ui
           file: ./simplydigitals-aiarbitrageur-ui/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Environment
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deployment Notification
+        run: |
+          echo "✅ Docker images built and pushed successfully"
+          echo "Backend image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}"
+          echo "Frontend image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}"
+          echo ""
+          echo "Ready for deployment to production environment"
+          echo ""
+          echo "Next steps:"
+          echo "1. Pull latest images from container registry"
+          echo "2. Update docker-compose.yml with new image tags"
+          echo "3. Restart services: docker-compose up -d"
+          echo "4. Monitor application logs and health checks"
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
