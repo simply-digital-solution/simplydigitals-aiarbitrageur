@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+
+if sys.version_info >= (3, 11):
+    from datetime import UTC
+else:
+    from datetime import timezone
+    UTC = timezone.utc
 
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship

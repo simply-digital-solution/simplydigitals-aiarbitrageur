@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import sys
+from datetime import datetime
+
+if sys.version_info >= (3, 11):
+    from datetime import UTC
+else:
+    from datetime import timezone
+    UTC = timezone.utc
 
 import yfinance as yf
 from fastapi import HTTPException, status
