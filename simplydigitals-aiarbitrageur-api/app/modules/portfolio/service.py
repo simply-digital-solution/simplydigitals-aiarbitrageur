@@ -96,7 +96,8 @@ class PortfolioService:
             symbol=symbol,
             side=req.side,
             qty=req.qty,
-            price=req.price,
+            limit_price=req.price,
+            execution_price=req.price,
         )
         self.db.add(trade)
         await self.db.flush()

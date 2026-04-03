@@ -35,11 +35,13 @@ def test_account_info_dataclass() -> None:
     from app.modules.broker.service import AccountInfo
 
     account = AccountInfo(
+        account_value=150000.0,
         portfolio_value=100000.0,
         buying_power=200000.0,
         cash=50000.0,
     )
     
+    assert account.account_value == 150000.0
     assert account.portfolio_value == 100000.0
     assert account.buying_power == 200000.0
     assert account.cash == 50000.0
@@ -68,11 +70,17 @@ def test_order_info_dataclass() -> None:
 
     order = OrderInfo(
         order_id="order-123",
+        symbol="AAPL",
+        qty=100.0,
+        side="buy",
+        limit_price=None,
         status="filled",
-        filled_qty=100,
+        filled_qty=100.0,
         filled_avg_price=150.0,
     )
     
     assert order.order_id == "order-123"
+    assert order.symbol == "AAPL"
+    assert order.qty == 100.0
     assert order.status == "filled"
-    assert order.filled_qty == 100
+    assert order.filled_qty == 100.0

@@ -57,8 +57,8 @@ class TradeRead(_Base):
     symbol: str
     side: str
     qty: float
-    price: float
-    executed_at: datetime
+    execution_price: float | None
+    executed_at: datetime | None
 
 
 class TradeWithStatusRead(_Base):
