@@ -23,7 +23,7 @@ source .venv/bin/activate
 pip install -e ".[dev,test]"
 cp .env.example .env
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### UI
@@ -43,5 +43,5 @@ cd simplydigitals-aiarbitrageur
 docker-compose up --build
 ```
 
-API: http://localhost:8001
+API: http://localhost:8000
 UI: http://localhost:5174

@@ -7,6 +7,7 @@ import PortfolioSummary from './components/PortfolioSummary';
 export default function App() {
   const [selectedSymbols, setSelectedSymbols] = useState(['AAPL', 'MSFT']);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [latestPrices, setLatestPrices] = useState({});
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -16,7 +17,7 @@ export default function App() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.35em] text-sky-400">AI Arbitrageur</p>
-              <h1 className="text-2xl font-semibold sm:text-3xl">Intraday Trading Dashboard</h1>
+              <h1 className="text-2xl font-semibold sm:text-3xl">Trading Dashboard</h1>
             </div>
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -45,7 +46,7 @@ export default function App() {
           <main className="flex-1 space-y-6">
             {/* Charts Grid */}
             <section className="rounded-3xl border border-slate-700 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/20">
-              <ChartGrid selectedSymbols={selectedSymbols} />
+              <ChartGrid selectedSymbols={selectedSymbols} onPricesUpdated={setLatestPrices} />
             </section>
 
             {/* Trade Panel */}
@@ -56,7 +57,7 @@ export default function App() {
 
           {/* Right Sidebar: Full-width mobile, Fixed 200px desktop */}
           <aside className="w-full rounded-3xl border border-slate-700 bg-slate-900/70 shadow-xl shadow-slate-950/20 lg:w-56 lg:flex-shrink-0">
-            <PortfolioSummary />
+            <PortfolioSummary latestPrices={latestPrices} />
           </aside>
         </div>
       </div>

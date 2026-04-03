@@ -21,7 +21,7 @@ export default function TradePanel({ selectedSymbols }) {
 
   const [prices, setPrices] = useState({});
   const [portfolio, setPortfolio] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showLimitPriceInput, setShowLimitPriceInput] = useState(false);
@@ -39,12 +39,11 @@ export default function TradePanel({ selectedSymbols }) {
             if (resp.data && resp.data.length > 0) {
               priceData[symbol] = resp.data[0].close;
             }
-          } catch (err) {
-            // Mock data for demo
-            priceData[symbol] = Math.random() * 500;
+          } catch {
+            // keep existing price if available, don't overwrite with random
           }
         }
-        setPrices(priceData);
+        setPrices((prev) => ({ ...prev, ...priceData }));
       } catch (err) {
         console.error('Error fetching prices:', err);
       }
@@ -55,25 +54,19 @@ export default function TradePanel({ selectedSymbols }) {
     return () => clearInterval(interval);
   }, [selectedSymbols]);
 
-  // Fetch portfolio info
+  // Fetch portfolio info (silently in background — never blocks the UI)
   useEffect(() => {
     const fetchPortfolio = async () => {
       try {
-        const resp = await axios.get(`${API_BASE_URL}/portfolio`);
+        const resp = await axios.get(`${API_BASE_URL}/portfolio/account`);
         setPortfolio(resp.data);
-      } catch (err) {
-        console.error('Error fetching portfolio:', err);
-        // Mock portfolio for demo
-        setPortfolio({
-          cash: 50000,
-          portfolio_value: 100000,
-          positions: [],
-        });
+      } catch {
+        // leave existing state unchanged
       }
     };
 
     fetchPortfolio();
-    const interval = setInterval(fetchPortfolio, 30000); // Update every 30s
+    const interval = setInterval(fetchPortfolio, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -84,30 +77,22 @@ export default function TradePanel({ selectedSymbols }) {
     }
   }, [selectedSymbols]);
 
-  // Calculate order metrics
-  const currentPrice = prices[formData.symbol] || 100;
-  const orderValue =
-    formData.qty * (formData.marketOrder ? currentPrice : formData.limitPrice || currentPrice);
-  const portfolioValue = portfolio?.portfolio_value || 100000;
-  const cash = portfolio?.cash || 50000;
-  const exposurePercent = ((orderValue / portfolioValue) * 100).toFixed(2);
-  const orderSizePercent = ((orderValue / portfolioValue) * 100).toFixed(2);
+  // Calculate order metrics — only for the chosen symbol
+  const currentPrice = prices[formData.symbol] ?? null;
+  const effectivePrice = formData.marketOrder
+    ? currentPrice
+    : formData.limitPrice || currentPrice;
+  const orderValue = effectivePrice != null ? formData.qty * effectivePrice : null;
+  const cash = portfolio?.cash ?? 100000;
+  const portfolioValue = portfolio?.portfolio_value || cash;
+  const exposurePercent =
+    orderValue != null ? ((orderValue / portfolioValue) * 100).toFixed(2) : null;
 
-  // Validation
+  // Validation — only block on things the user can fix right now
   const errors = [];
-  if (orderValue > cash) {
+  if (orderValue != null && orderValue > cash) {
     errors.push(
       `Order value ($${orderValue.toFixed(2)}) exceeds available cash ($${cash.toFixed(2)})`
-    );
-  }
-  if (exposurePercent > TRADE_LIMITS.MAX_POSITION_EXPOSURE_PCT) {
-    errors.push(
-      `Position exposure (${exposurePercent}%) exceeds limit (${TRADE_LIMITS.MAX_POSITION_EXPOSURE_PCT}%)`
-    );
-  }
-  if (orderSizePercent > TRADE_LIMITS.MAX_ORDER_SIZE_PCT) {
-    errors.push(
-      `Order size (${orderSizePercent}%) exceeds limit (${TRADE_LIMITS.MAX_ORDER_SIZE_PCT}%)`
     );
   }
 
@@ -122,11 +107,11 @@ export default function TradePanel({ selectedSymbols }) {
       return;
     }
 
-    setLoading(true);
+    setSubmitting(true);
     try {
       const tradeRequest = {
         symbol: formData.symbol,
-        side: formData.side,
+        side: formData.side.toLowerCase(),
         qty: formData.qty,
         limit_price: formData.marketOrder ? null : formData.limitPrice,
       };
@@ -159,7 +144,7 @@ export default function TradePanel({ selectedSymbols }) {
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to submit order. Please try again.');
     }
-    setLoading(false);
+    setSubmitting(false);
   };
 
   return (
@@ -199,7 +184,9 @@ export default function TradePanel({ selectedSymbols }) {
                 </option>
               ))}
             </select>
-            <p className="text-xs text-slate-500 mt-1">Current: ${currentPrice.toFixed(2)}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {currentPrice != null ? `Current: $${currentPrice.toFixed(2)}` : 'Price loading...'}
+            </p>
           </div>
 
           {/* Side */}
@@ -273,25 +260,36 @@ export default function TradePanel({ selectedSymbols }) {
 
         {/* Order Summary */}
         <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-3 space-y-2 text-xs">
-          <div className="flex justify-between">
-            <span className="text-slate-400">Order Value:</span>
-            <span className="text-white font-medium">${orderValue.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Position Exposure:</span>
-            <span
-              className={
-                exposurePercent > TRADE_LIMITS.MAX_POSITION_EXPOSURE_PCT
-                  ? 'text-rose-400'
-                  : 'text-sky-400'
-              }
-            >
-              {exposurePercent}%
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500 pb-1 border-b border-slate-700/50">Order Summary</p>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-400 w-36 shrink-0">
+              {formData.marketOrder ? 'Market Price' : 'Limit Price'}
+            </span>
+            <span className="text-white font-medium tabular-nums">
+              {effectivePrice != null ? `$${effectivePrice.toFixed(2)}` : 'Loading...'}
             </span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Available Cash:</span>
-            <span className={orderValue > cash ? 'text-rose-400' : 'text-emerald-400'}>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-400 w-36 shrink-0">Order Value</span>
+            <span className="text-white font-medium tabular-nums">
+              {orderValue != null ? `$${orderValue.toFixed(2)}` : effectivePrice == null ? 'Awaiting price' : '—'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-400 w-36 shrink-0">Position Exposure</span>
+            <span
+              className={`font-medium tabular-nums ${
+                exposurePercent != null && parseFloat(exposurePercent) > TRADE_LIMITS.MAX_POSITION_EXPOSURE_PCT
+                  ? 'text-rose-400'
+                  : 'text-sky-400'
+              }`}
+            >
+              {exposurePercent != null ? `${exposurePercent}%` : '—'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-400 w-36 shrink-0">Available Cash</span>
+            <span className={`font-medium tabular-nums ${orderValue != null && orderValue > cash ? 'text-rose-400' : 'text-emerald-400'}`}>
               ${cash.toFixed(2)}
             </span>
           </div>
@@ -311,16 +309,16 @@ export default function TradePanel({ selectedSymbols }) {
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={loading || errors.length > 0 || selectedSymbols.length === 0}
+          disabled={submitting || errors.length > 0 || selectedSymbols.length === 0}
           className={`w-full py-3 rounded-lg font-semibold transition ${
             errors.length > 0 || selectedSymbols.length === 0
               ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-              : loading
+              : submitting
                 ? 'bg-sky-500/50 text-white cursor-wait'
                 : 'bg-sky-500 text-slate-950 hover:bg-sky-400'
           }`}
         >
-          {loading
+          {submitting
             ? 'Submitting...'
             : `${formData.side === 'BUY' ? 'Buy' : 'Sell'} ${formData.qty} ${formData.symbol}`}
         </button>

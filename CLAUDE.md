@@ -37,7 +37,7 @@ mypy app/                                    # type check
 bandit -r app/                               # security scan
 pytest tests/ -v                             # run tests
 alembic upgrade head                         # apply migrations
-uvicorn app.main:app --reload --port 8001    # run dev server
+uvicorn app.main:app --reload --port 8000    # run dev server
 ```
 
 ### Code quality
@@ -74,7 +74,7 @@ npm run build                                 # production build
 ## Docker
 
 ```bash
-docker-compose up --build   # runs API on :8001, UI on :5174
+docker-compose up --build   # runs API on :8000, UI on :5174
 ```
 
 Images pushed to GitHub Container Registry (`ghcr.io`).

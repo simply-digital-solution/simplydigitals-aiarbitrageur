@@ -74,3 +74,13 @@ class TradeWithStatusRead(_Base):
     status: str
     created_at: datetime
     executed_at: datetime | None
+
+
+class TradeHistoryRead(_Base):
+    id: str
+    symbol: str
+    side: str
+    qty: float
+    execution_price: float | None
+    status: str
+    created_at: datetime

@@ -62,6 +62,17 @@ class Trade(Base):
     ticker: Mapped["Ticker"] = relationship()  # type: ignore[name-defined]
 
 
+class UserAccount(Base):
+    """Per-user cash balance, updated on every trade."""
+
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    cash: Mapped[float] = mapped_column(Float, nullable=False, default=100000.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class TradeLimit(Base):
     """Per-user trading limits and risk parameters."""
 

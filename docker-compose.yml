@@ -6,7 +6,7 @@ services:
       context: ./simplydigitals-aiarbitrageur-api
       dockerfile: Dockerfile.server
     ports:
-      - "8001:8001"
+      - "8000:8000"
     environment:
       ENVIRONMENT: development
       SECRET_KEY: dev-arbitrageur-secret-key-1234567890
@@ -22,7 +22,7 @@ services:
     ports:
       - "5174:3000"
     environment:
-      VITE_API_BASE_URL: http://localhost:8001
+      VITE_API_BASE_URL: http://localhost:8000
     depends_on:
       - api
 

@@ -72,12 +72,15 @@ class AlpacaBrokerService:
             )
             logger.info("alpaca_connected", base_url=self.settings.ALPACA_BASE_URL)
         except ImportError:
-            raise AlpacaBrokerServiceError("alpaca-trade-api package not installed")
+            logger.warning("alpaca_package_missing", hint="pip install alpaca-trade-api")
+            self._client = None
         except Exception as exc:
             raise AlpacaBrokerServiceError(f"Failed to connect to Alpaca: {exc}")
 
     def get_account(self) -> AccountInfo:
         """Fetch account balance and buying power."""
+        if self._client is None:
+            raise AlpacaBrokerServiceError("Alpaca client not available (package not installed)")
         try:
             account = self._client.get_account()
             return AccountInfo(

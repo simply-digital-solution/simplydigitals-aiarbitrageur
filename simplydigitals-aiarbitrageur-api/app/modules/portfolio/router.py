@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.auth.dependencies import get_current_user_id
 from app.modules.portfolio.schemas import (
     PositionRead,
+    TradeHistoryRead,
     TradeRead,
     TradeRequest,
     TradeWithLimitsRequest,
@@ -46,6 +47,23 @@ async def execute_trade_with_limits(
     """Execute trade with automatic limit validation (dollar amount + position exposure)."""
     trade = await PortfolioService(db).execute_trade_with_limits(req, user_id)
     return TradeWithStatusRead.model_validate(trade)
+
+
+@router.get("/account")
+async def get_account(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
+    return await PortfolioService(db).get_account_info(user_id)
+
+
+@router.get("/trades", response_model=list[TradeHistoryRead])
+async def get_trade_history(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> list[TradeHistoryRead]:
+    trades = await PortfolioService(db).get_trades(user_id)
+    return [TradeHistoryRead.model_validate(t) for t in trades]
 
 
 @router.post("/sync-positions", status_code=200)

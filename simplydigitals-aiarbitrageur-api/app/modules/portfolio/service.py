@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.broker.service import AlpacaBrokerService, AlpacaBrokerServiceError
-from app.modules.portfolio.models import PortfolioPosition, Trade, TradeLimit
+from app.modules.portfolio.models import PortfolioPosition, Trade, TradeLimit, UserAccount
 from app.modules.portfolio.schemas import PositionRead, TradeRequest, TradeWithLimitsRequest
 from app.shared.logging import get_logger
 
@@ -27,7 +27,13 @@ def _live_price(symbol: str) -> float | None:
 class PortfolioService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-        self.broker = AlpacaBrokerService()
+        self._broker: AlpacaBrokerService | None = None
+
+    @property
+    def broker(self) -> AlpacaBrokerService:
+        if self._broker is None:
+            self._broker = AlpacaBrokerService()
+        return self._broker
 
     async def get_portfolio(self, user_id: str) -> list[PositionRead]:
         result = await self.db.execute(
@@ -58,6 +64,9 @@ class PortfolioService:
 
     async def execute_trade(self, req: TradeRequest, user_id: str) -> Trade:
         symbol = req.symbol.upper()
+        account = await self._get_or_create_account(user_id)
+        trade_value = req.price * req.qty
+
         result = await self.db.execute(
             select(PortfolioPosition).where(
                 PortfolioPosition.user_id == user_id,
@@ -67,8 +76,13 @@ class PortfolioService:
         position = result.scalar_one_or_none()
 
         if req.side == "buy":
+            if account.cash < trade_value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient cash: have ${account.cash:.2f}, need ${trade_value:.2f}",
+                )
+            account.cash -= trade_value
             if position:
-                # Recalculate weighted average cost
                 total_cost = position.avg_cost * position.qty + req.price * req.qty
                 position.qty += req.qty
                 position.avg_cost = total_cost / position.qty
@@ -88,6 +102,7 @@ class PortfolioService:
                     detail=f"Insufficient position: have {position.qty if position else 0}, selling {req.qty}",
                 )
             position.qty -= req.qty
+            account.cash += trade_value
             if position.qty == 0:
                 await self.db.delete(position)
 
@@ -235,6 +250,43 @@ class PortfolioService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Failed to submit order: {exc}",
             ) from exc
+
+    async def _get_or_create_account(self, user_id: str) -> UserAccount:
+        result = await self.db.execute(
+            select(UserAccount).where(UserAccount.user_id == user_id)
+        )
+        account = result.scalar_one_or_none()
+        if account:
+            return account
+        account = UserAccount(user_id=user_id, cash=100_000.0)
+        self.db.add(account)
+        await self.db.flush()
+        return account
+
+    async def get_account_info(self, user_id: str) -> dict:
+        account = await self._get_or_create_account(user_id)
+        result = await self.db.execute(
+            select(PortfolioPosition).where(PortfolioPosition.user_id == user_id)
+        )
+        positions = list(result.scalars().all())
+        positions_value = sum(
+            ((_live_price(p.symbol) or p.avg_cost) * p.qty)
+            for p in positions if p.qty > 0
+        )
+        return {
+            "cash": account.cash,
+            "buying_power": account.cash,
+            "portfolio_value": account.cash + positions_value,
+        }
+
+    async def get_trades(self, user_id: str, limit: int = 50) -> list[Trade]:
+        result = await self.db.execute(
+            select(Trade)
+            .where(Trade.user_id == user_id)
+            .order_by(Trade.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def sync_positions_from_alpaca(self, user_id: str) -> None:
         """Fetch live positions from Alpaca and upsert to portfolio_positions table."""
