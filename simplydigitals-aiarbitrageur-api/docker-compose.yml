@@ -1,0 +1,40 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      ENVIRONMENT: development
+      SECRET_KEY: dev-shared-secret-must-match-aiconnoisseur!!
+      DATABASE_URL: postgresql+asyncpg://arb:arb@db:5432/arbitrageur
+    volumes:
+      - ./app:/var/task/app:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: arb
+      POSTGRES_PASSWORD: arb
+      POSTGRES_DB: arbitrageur
+    ports:
+      - "5433:5432"
+    volumes:
+      - arbitrageur_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  arbitrageur_pg_data:

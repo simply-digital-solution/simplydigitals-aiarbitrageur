@@ -1,0 +1,46 @@
+version: '3.9'
+
+services:
+  api:
+    build: ./simplydigitals-aiarbitrageur-api
+    ports:
+      - "8001:8001"
+    environment:
+      ENVIRONMENT: development
+      SECRET_KEY: dev-arbitrageur-secret-key-1234567890
+      DATABASE_URL: postgresql+asyncpg://arb:arb@db:5432/arbitrageur
+    volumes:
+      - ./simplydigitals-aiarbitrageur-api/app:/var/task/app:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+  ui:
+    build: ./simplydigitals-aiarbitrageur-ui
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8001
+    depends_on:
+      - api
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: arb
+      POSTGRES_PASSWORD: arb
+      POSTGRES_DB: arbitrageur
+    ports:
+      - "5433:5432"
+    volumes:
+      - arbitrageur_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  arbitrageur_pg_data:

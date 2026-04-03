@@ -1,0 +1,11 @@
+# Root ignore for the arbitrageur app
+.env
+*.env
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/node_modules/
+**/dist/
+**/coverage/
+**/build/
+.DS_Store
