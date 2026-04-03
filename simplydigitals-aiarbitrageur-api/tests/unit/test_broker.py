@@ -40,7 +40,7 @@ def test_account_info_dataclass() -> None:
         buying_power=200000.0,
         cash=50000.0,
     )
-    
+
     assert account.account_value == 150000.0
     assert account.portfolio_value == 100000.0
     assert account.buying_power == 200000.0
@@ -58,7 +58,7 @@ def test_position_info_dataclass() -> None:
         market_value=15500.0,
         unrealized_pl=500.0,
     )
-    
+
     assert position.symbol == "AAPL"
     assert position.qty == 100
     assert position.avg_entry_price == 150.0
@@ -78,7 +78,7 @@ def test_order_info_dataclass() -> None:
         filled_qty=100.0,
         filled_avg_price=150.0,
     )
-    
+
     assert order.order_id == "order-123"
     assert order.symbol == "AAPL"
     assert order.qty == 100.0

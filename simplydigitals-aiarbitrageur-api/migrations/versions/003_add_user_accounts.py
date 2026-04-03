@@ -7,8 +7,8 @@ Create Date: 2026-04-03
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "003_add_user_accounts"
 down_revision = "002_alpaca_integration"

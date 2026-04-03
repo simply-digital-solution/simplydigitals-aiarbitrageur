@@ -28,14 +28,14 @@ def test_intraday_price_1min_model() -> None:
     # Check columns
     columns = {col.name for col in IntradayPrice1Min.__table__.columns}
     required = {"ticker_id", "ts", "open", "high", "low", "close", "volume"}
-    
+
     for col in required:
         assert col in columns, f"IntradayPrice1Min missing column: {col}"
 
 
 def test_intraday_price_existing_models() -> None:
     """Verify existing price models still work."""
-    from app.modules.prices.models import IntradayPrice, ClosingPrice
+    from app.modules.prices.models import ClosingPrice, IntradayPrice
 
     # These should still exist for backward compatibility
     assert IntradayPrice.__tablename__ == "intraday_prices"
