@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Dark background circle -->
+  <circle cx="16" cy="16" r="16" fill="#0f172a"/>
+  <!-- Candlestick chart bars -->
+  <!-- Bar 1 (red/down) -->
+  <rect x="5" y="14" width="3" height="8" rx="0.5" fill="#f43f5e"/>
+  <line x1="6.5" y1="12" x2="6.5" y2="14" stroke="#f43f5e" stroke-width="1"/>
+  <line x1="6.5" y1="22" x2="6.5" y2="24" stroke="#f43f5e" stroke-width="1"/>
+  <!-- Bar 2 (green/up) -->
+  <rect x="11" y="11" width="3" height="9" rx="0.5" fill="#34d399"/>
+  <line x1="12.5" y1="8" x2="12.5" y2="11" stroke="#34d399" stroke-width="1"/>
+  <line x1="12.5" y1="20" x2="12.5" y2="22" stroke="#34d399" stroke-width="1"/>
+  <!-- Bar 3 (green/up) -->
+  <rect x="17" y="9" width="3" height="10" rx="0.5" fill="#34d399"/>
+  <line x1="18.5" y1="7" x2="18.5" y2="9" stroke="#34d399" stroke-width="1"/>
+  <line x1="18.5" y1="19" x2="18.5" y2="21" stroke="#34d399" stroke-width="1"/>
+  <!-- Bar 4 (sky/neutral) -->
+  <rect x="23" y="12" width="3" height="7" rx="0.5" fill="#38bdf8"/>
+  <line x1="24.5" y1="10" x2="24.5" y2="12" stroke="#38bdf8" stroke-width="1"/>
+  <line x1="24.5" y1="19" x2="24.5" y2="21" stroke="#38bdf8" stroke-width="1"/>
+</svg>
