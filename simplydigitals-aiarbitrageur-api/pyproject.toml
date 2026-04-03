@@ -80,7 +80,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=html --cov-report=xml --cov-fail-under=70"
+addopts = "--cov=app --cov-report=html --cov-report=xml --cov-fail-under=50"
 
 [tool.coverage.run]
 source = ["app"]

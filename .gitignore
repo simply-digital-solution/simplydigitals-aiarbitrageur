@@ -8,4 +8,49 @@
 **/dist/
 **/coverage/
 **/build/
+
+# Test and coverage outputs
+**/.coverage
+**/coverage.xml
+**/htmlcov/
+**/.coveragerc
+**/pytest.ini
+
+# macOS-specific files
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+*.app
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# macOS editor temporary files
+*~
+*.swp
+*.swo
+*#
+
+# macOS duplicate files (Finder creates copies with " 2", " 3", etc.)
+# Examples: test_auth 2.py, App 2.jsx, package-lock 2.json, etc.
+*\ [0-9].py
+*\ [0-9].js
+*\ [0-9].jsx
+*\ [0-9].json
+*\ [0-9].html
+*\ [0-9].css
+*\ [0-9].db
+*\ [0-9].yml
+*\ [0-9].yaml
+*\ [0-9].ts
+*\ [0-9].tsx
+*\ [0-9]
+
+# IDE
+.vscode
+.idea
+*.sublime-workspace
+*.sublime-project
