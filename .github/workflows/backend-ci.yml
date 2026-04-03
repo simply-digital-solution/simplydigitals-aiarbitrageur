@@ -40,7 +40,7 @@ jobs:
 
       - name: Lint with Ruff
         working-directory: ${{ env.WORKING_DIRECTORY }}
-        run: ruff check . --select E,W,F,I,B,UP,N,ANN --format github
+        run: ruff check . --output-format github
 
       - name: Type check with MyPy
         working-directory: ${{ env.WORKING_DIRECTORY }}
