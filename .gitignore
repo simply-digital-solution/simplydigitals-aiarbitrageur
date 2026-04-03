@@ -16,6 +16,9 @@
 **/.coveragerc
 **/pytest.ini
 
+# SQLite dev databases
+**/*.db
+
 # macOS-specific files
 .DS_Store
 ._*
