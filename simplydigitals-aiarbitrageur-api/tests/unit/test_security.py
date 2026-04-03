@@ -2,21 +2,11 @@
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timedelta
-
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
-
 import pytest
-from jose import JWTError, jwt
-from unittest.mock import patch
+from jose import jwt
 
-from app.shared.security import decode_token
 from app.shared.config import get_settings
+from app.shared.security import decode_token
 
 
 class TestJWTTokenDecoding:
@@ -53,7 +43,7 @@ class TestJWTTokenDecoding:
             "wrong-secret-key",
             algorithm="HS256",
         )
-        
+
         with pytest.raises(ValueError, match="Invalid token"):
             decode_token(invalid_token)
 
@@ -65,7 +55,7 @@ class TestJWTTokenDecoding:
             settings.SECRET_KEY,
             algorithm=settings.ALGORITHM,
         )
-        
+
         with pytest.raises(ValueError, match="Wrong token type"):
             decode_token(token, expected_type="access")
 

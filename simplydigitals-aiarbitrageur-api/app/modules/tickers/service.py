@@ -17,7 +17,9 @@ def _get_or_create_ticker_data(symbol: str) -> dict:
     """Fetch ticker metadata from yfinance."""
     info = yf.Ticker(symbol).info
     if not info or info.get("regularMarketPrice") is None and info.get("currentPrice") is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ticker '{symbol}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Ticker '{symbol}' not found"
+        )
     return {
         "symbol": symbol.upper(),
         "name": info.get("longName") or info.get("shortName") or symbol,

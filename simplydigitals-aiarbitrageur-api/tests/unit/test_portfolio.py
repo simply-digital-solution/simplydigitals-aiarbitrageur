@@ -103,7 +103,7 @@ def test_portfolio_service_execute_trade_with_limits() -> None:
     from app.modules.portfolio.service import PortfolioService
 
     assert hasattr(PortfolioService, "execute_trade_with_limits")
-    assert callable(getattr(PortfolioService, "execute_trade_with_limits"))
+    assert callable(PortfolioService.execute_trade_with_limits)
 
 
 def test_portfolio_service_sync_positions() -> None:
@@ -111,7 +111,7 @@ def test_portfolio_service_sync_positions() -> None:
     from app.modules.portfolio.service import PortfolioService
 
     assert hasattr(PortfolioService, "sync_positions_from_alpaca")
-    assert callable(getattr(PortfolioService, "sync_positions_from_alpaca"))
+    assert callable(PortfolioService.sync_positions_from_alpaca)
 
 
 def test_portfolio_service_calculate_exposure() -> None:
@@ -119,7 +119,7 @@ def test_portfolio_service_calculate_exposure() -> None:
     from app.modules.portfolio.service import PortfolioService
 
     assert hasattr(PortfolioService, "_calculate_portfolio_exposure")
-    assert callable(getattr(PortfolioService, "_calculate_portfolio_exposure"))
+    assert callable(PortfolioService._calculate_portfolio_exposure)
 
 
 def test_portfolio_service_trade_limits() -> None:
@@ -127,7 +127,7 @@ def test_portfolio_service_trade_limits() -> None:
     from app.modules.portfolio.service import PortfolioService
 
     assert hasattr(PortfolioService, "_get_or_create_trade_limits")
-    assert callable(getattr(PortfolioService, "_get_or_create_trade_limits"))
+    assert callable(PortfolioService._get_or_create_trade_limits)
 
 
 @pytest.mark.asyncio
@@ -323,7 +323,9 @@ async def test_sell_all_removes_position(client: AsyncClient, auth_headers: dict
 
 
 @pytest.mark.asyncio
-async def test_account_endpoint_returns_cash_not_mock(client: AsyncClient, auth_headers: dict) -> None:
+async def test_account_endpoint_returns_cash_not_mock(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """GET /portfolio/account must return real cash, not hardcoded 50000 mock.
 
     Regression: TradePanel was reading cash from /portfolio (positions list)
@@ -338,7 +340,9 @@ async def test_account_endpoint_returns_cash_not_mock(client: AsyncClient, auth_
 
 
 @pytest.mark.asyncio
-async def test_account_poll_does_not_block_trade_submission(client: AsyncClient, auth_headers: dict) -> None:
+async def test_account_poll_does_not_block_trade_submission(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """Polling /portfolio/account and submitting a trade are independent — both return success.
 
     Regression: a shared loading=true flag in TradePanel disabled the submit
@@ -352,11 +356,15 @@ async def test_account_poll_does_not_block_trade_submission(client: AsyncClient,
         headers=auth_headers,
     )
     assert poll_resp.status_code == 200, "Account poll should always return 200"
-    assert trade_resp.status_code == 201, "Trade submission should succeed independently of account poll"
+    assert trade_resp.status_code == 201, (
+        "Trade submission should succeed independently of account poll"
+    )
 
 
 @pytest.mark.asyncio
-async def test_cash_reflects_real_balance_after_trades(client: AsyncClient, auth_headers: dict) -> None:
+async def test_cash_reflects_real_balance_after_trades(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """Cash shown in trade panel order summary matches actual post-trade balance.
 
     Regression: order summary was using portfolio_value/cash from positions
@@ -392,7 +400,9 @@ async def test_order_value_exceeding_cash_blocked(client: AsyncClient, auth_head
 
 
 @pytest.mark.asyncio
-async def test_account_endpoint_has_all_order_summary_fields(client: AsyncClient, auth_headers: dict) -> None:
+async def test_account_endpoint_has_all_order_summary_fields(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """GET /portfolio/account returns all fields needed by the trade panel order summary."""
     response = await client.get("/api/v1/portfolio/account", headers=auth_headers)
     data = response.json()
@@ -401,7 +411,9 @@ async def test_account_endpoint_has_all_order_summary_fields(client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_exposure_percent_decreases_after_sell(client: AsyncClient, auth_headers: dict) -> None:
+async def test_exposure_percent_decreases_after_sell(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """Selling reduces portfolio exposure — validates the exposure % in order summary."""
     await client.post(
         "/api/v1/portfolio/trade",
@@ -446,7 +458,9 @@ async def test_trade_side_must_be_lowercase(client: AsyncClient, auth_headers: d
 
 
 @pytest.mark.asyncio
-async def test_order_value_only_uses_chosen_symbol_price(client: AsyncClient, auth_headers: dict) -> None:
+async def test_order_value_only_uses_chosen_symbol_price(
+    client: AsyncClient, auth_headers: dict
+) -> None:
     """Order calculations use only the selected symbol — not all watchlist symbols.
 
     Regression: prices were fetched for all symbols but the order summary was

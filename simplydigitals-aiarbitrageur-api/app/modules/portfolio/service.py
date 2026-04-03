@@ -99,7 +99,10 @@ class PortfolioService:
             if not position or position.qty < req.qty:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Insufficient position: have {position.qty if position else 0}, selling {req.qty}",
+                    detail=(
+                    f"Insufficient position: have {position.qty if position else 0}, "
+                    f"selling {req.qty}"
+                ),
                 )
             position.qty -= req.qty
             account.cash += trade_value
@@ -188,14 +191,19 @@ class PortfolioService:
             )
 
         # Estimate trade value
-        trade_value = req.qty * current_price if req.limit_price is None else req.qty * req.limit_price
+        trade_value = (
+            req.qty * current_price if req.limit_price is None else req.qty * req.limit_price
+        )
 
         # Check 1: Max order size
         max_order_value = total_value * (limits.max_order_size_pct / 100)
         if trade_value > max_order_value:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Order size ${trade_value:.2f} exceeds max allowed ${max_order_value:.2f} ({limits.max_order_size_pct}% of portfolio)",
+                detail=(
+                    f"Order size ${trade_value:.2f} exceeds max allowed "
+                    f"${max_order_value:.2f} ({limits.max_order_size_pct}% of portfolio)"
+                ),
             )
 
         # Check 2: Position exposure (simplified)
@@ -210,7 +218,10 @@ class PortfolioService:
         if after_trade_exposure > max_exposure:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Trade would result in {after_trade_exposure/total_value*100:.1f}% exposure (max {limits.max_position_exposure_pct}%)",
+                detail=(
+                    f"Trade would result in {after_trade_exposure / total_value * 100:.1f}% "
+                    f"exposure (max {limits.max_position_exposure_pct}%)"
+                ),
             )
 
         # All limits passed; submit to Alpaca

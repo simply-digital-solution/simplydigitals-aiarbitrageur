@@ -10,7 +10,6 @@ In local/dev the APScheduler background scheduler runs inside the process.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
 from typing import Any
 
 from app.shared.config import get_settings
@@ -59,9 +58,9 @@ async def _job_purge_intraday_1min() -> None:
 
 
 async def _job_sync_positions() -> None:
+    from app.modules.auth.dependencies import DEFAULT_TRADER_ID
     from app.modules.broker.service import AlpacaBrokerService
     from app.modules.portfolio.models import PortfolioPosition
-    from app.modules.auth.dependencies import DEFAULT_TRADER_ID
     async with AsyncSessionLocal() as db:
         try:
             broker = AlpacaBrokerService()
@@ -115,7 +114,6 @@ ACTIONS: dict[str, Any] = {
     "evaluate_triggers":   _job_evaluate_triggers,
 }
 
-from typing import Any  # noqa: E402
 
 
 async def dispatch_action(action: str) -> None:
@@ -140,7 +138,7 @@ def start_scheduler() -> None:
 
         scheduler = BackgroundScheduler()
 
-        def _run(coro_fn):  # type: ignore[no-untyped-def]
+        def _run(coro_fn: Any) -> None:
             asyncio.run(coro_fn())
 
         # Every 5 minutes during market hours (UTC)

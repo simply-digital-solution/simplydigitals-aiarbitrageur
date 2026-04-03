@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timedelta
-
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
+import asyncio
+import uuid
+from datetime import UTC, datetime, timedelta
 
 import yfinance as yf
 from sqlalchemy import delete, select
@@ -36,12 +31,19 @@ _RANGE_MAP = {
 }
 
 
+def _to_utc(ts: object) -> datetime:
+    dt = ts.to_pydatetime()  # type: ignore[union-attr]
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
 class PriceService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def _get_ticker(self, symbol: str) -> Ticker:
-        result = await self.db.execute(select(Ticker).where(Ticker.symbol == symbol.upper()))
+        result = await self.db.execute(
+            select(Ticker).where(Ticker.symbol == symbol.upper())
+        )
         ticker = result.scalar_one_or_none()
         if not ticker:
             try:
@@ -50,7 +52,9 @@ class PriceService:
                 await self.db.flush()
             except Exception:
                 await self.db.rollback()
-                result = await self.db.execute(select(Ticker).where(Ticker.symbol == symbol.upper()))
+                result = await self.db.execute(
+                    select(Ticker).where(Ticker.symbol == symbol.upper())
+                )
                 ticker = result.scalar_one()
         return ticker
 
@@ -75,11 +79,11 @@ class PriceService:
         return rows
 
     async def _backfill_history(self, ticker: Ticker, period: str) -> list[ClosingPrice]:
-        import asyncio
         loop = asyncio.get_event_loop()
+        sym = ticker.symbol
         df = await loop.run_in_executor(
             None,
-            lambda: yf.Ticker(ticker.symbol).history(period=period, interval="1d", auto_adjust=True),
+            lambda: yf.Ticker(sym).history(period=period, interval="1d", auto_adjust=True),
         )
         if df.empty:
             return []
@@ -115,8 +119,6 @@ class PriceService:
         return list(result.scalars().all())
 
     async def _refresh_intraday(self, ticker: Ticker) -> None:
-        import asyncio
-        import uuid
         loop = asyncio.get_event_loop()
         symbol = ticker.symbol
         ticker_id = ticker.id
@@ -130,7 +132,7 @@ class PriceService:
             {
                 "id": str(uuid.uuid4()),
                 "ticker_id": ticker_id,
-                "ts": ts.to_pydatetime().replace(tzinfo=UTC) if ts.tzinfo is None else ts.to_pydatetime(),
+                "ts": _to_utc(ts),
                 "open": float(row["Open"]),
                 "high": float(row["High"]),
                 "low": float(row["Low"]),
@@ -145,12 +147,16 @@ class PriceService:
     # ── Live quotes ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_quotes(symbols: list[str]) -> dict[str, dict]:
-        quotes: dict[str, dict] = {}
+    def get_quotes(symbols: list[str]) -> dict[str, dict]:  # type: ignore[type-arg]
+        quotes: dict[str, dict] = {}  # type: ignore[type-arg]
         for symbol in symbols:
             try:
                 info = yf.Ticker(symbol).fast_info
-                prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose") or 0
+                prev_close = (
+                    info.get("previousClose")
+                    or info.get("regularMarketPreviousClose")
+                    or 0
+                )
                 price = info.get("lastPrice") or info.get("regularMarketPrice") or 0
                 change = price - prev_close
                 change_pct = (change / prev_close * 100) if prev_close else 0
@@ -193,11 +199,13 @@ class PriceService:
         tickers = list(result.scalars().all())
         for ticker in tickers:
             try:
-                import asyncio
                 loop = asyncio.get_event_loop()
+                sym = ticker.symbol
                 df = await loop.run_in_executor(
                     None,
-                    lambda t=ticker: yf.Ticker(t.symbol).history(period="5d", interval="1d", auto_adjust=True),
+                    lambda t=sym: yf.Ticker(t).history(  # type: ignore[misc]
+                        period="5d", interval="1d", auto_adjust=True
+                    ),
                 )
                 if df.empty:
                     continue
@@ -241,8 +249,6 @@ class PriceService:
     async def _refresh_intraday_1min(self, ticker: Ticker) -> None:
         """Fetch latest 1-min bars from yfinance and upsert to DB."""
         try:
-            import asyncio
-            import uuid
             loop = asyncio.get_event_loop()
             symbol = ticker.symbol
             ticker_id = ticker.id
@@ -257,7 +263,7 @@ class PriceService:
                 {
                     "id": str(uuid.uuid4()),
                     "ticker_id": ticker_id,
-                    "ts": ts.to_pydatetime().replace(tzinfo=UTC) if ts.tzinfo is None else ts.to_pydatetime(),
+                    "ts": _to_utc(ts),
                     "open": float(row["Open"]),
                     "high": float(row["High"]),
                     "low": float(row["Low"]),
@@ -294,4 +300,6 @@ class PriceService:
                 await svc._refresh_intraday_1min(ticker)
                 logger.info("intraday_1min_refreshed", symbol=ticker.symbol)
             except Exception as exc:
-                logger.warning("intraday_1min_refresh_failed", symbol=ticker.symbol, error=str(exc))
+                logger.warning(
+                    "intraday_1min_refresh_failed", symbol=ticker.symbol, error=str(exc)
+                )
