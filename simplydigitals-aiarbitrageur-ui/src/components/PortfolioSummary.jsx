@@ -271,10 +271,13 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
                       {symbolMeta[t.symbol]?.exchangeDisplay && (
                         <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[t.symbol].exchangeDisplay}</span>
                       )}
+                      {!t.order_id && (
+                        <span className="text-[10px] font-medium px-1 py-0.5 rounded bg-slate-700/60 text-slate-400">paper</span>
+                      )}
                     </div>
                     <span
                       className={`text-xs ${
-                        t.status === 'filled' ? 'text-emerald-400' : t.status === 'pending' ? 'text-yellow-400' : 'text-slate-400'
+                        t.status === 'filled' ? 'text-emerald-400' : t.status === 'accepted' ? 'text-sky-400' : t.status === 'pending' ? 'text-yellow-400' : 'text-slate-400'
                       }`}
                     >
                       {t.status}
@@ -293,7 +296,7 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
 
       {/* Refresh */}
       <button
-        onClick={() => { fetchPortfolio(); fetchTrades(); }}
+        onClick={() => { fetchPortfolio(); fetchTrades(); if (activeTab === 'history') checkSyncStatus(); }}
         disabled={loading}
         className="w-full rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2 text-xs font-medium text-sky-400 hover:bg-slate-900 transition disabled:opacity-50"
       >

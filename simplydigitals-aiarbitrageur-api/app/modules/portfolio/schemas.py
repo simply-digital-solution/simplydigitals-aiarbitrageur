@@ -83,4 +83,5 @@ class TradeHistoryRead(_Base):
     qty: float
     execution_price: float | None
     status: str
+    order_id: str | None = None
     created_at: datetime
