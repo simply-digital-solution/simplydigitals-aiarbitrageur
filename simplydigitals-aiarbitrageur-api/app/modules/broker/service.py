@@ -162,6 +162,33 @@ class AlpacaBrokerService:
         except Exception as exc:
             raise AlpacaBrokerServiceError(f"Failed to submit order for {symbol}: {exc}") from exc
 
+    def get_orders(self, status: str = "filled", limit: int = 100) -> list[OrderInfo]:
+        """Fetch recent orders from Alpaca.
+
+        Args:
+            status: "filled", "open", "closed", or "all"
+            limit: Maximum number of orders to return
+        """
+        try:
+            orders = self._client.list_orders(status=status, limit=limit, direction="desc")
+            return [
+                OrderInfo(
+                    order_id=order.id,
+                    symbol=order.symbol,
+                    qty=float(order.qty),
+                    side=order.side,
+                    limit_price=float(order.limit_price) if order.limit_price else None,
+                    status=order.status,
+                    filled_qty=float(order.filled_qty),
+                    filled_avg_price=(
+                        float(order.filled_avg_price) if order.filled_avg_price else None
+                    ),
+                )
+                for order in orders
+            ]
+        except Exception as exc:
+            raise AlpacaBrokerServiceError(f"Failed to list orders: {exc}") from exc
+
     def cancel_order(self, order_id: str) -> None:
         """Cancel an open order."""
         try:

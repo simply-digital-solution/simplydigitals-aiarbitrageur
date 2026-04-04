@@ -16,6 +16,8 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('summary');
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -41,12 +43,36 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
     }
   };
 
+  const checkSyncStatus = async () => {
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/portfolio/trade-sync-status`);
+      setSyncStatus(resp.data);
+    } catch {
+      setSyncStatus(null);
+    }
+  };
+
+  const syncTrades = async () => {
+    setSyncing(true);
+    try {
+      await axios.post(`${API_BASE_URL}/portfolio/sync-trades`);
+      await Promise.all([fetchTrades(), checkSyncStatus()]);
+    } catch {
+      // Leave state unchanged on error
+    }
+    setSyncing(false);
+  };
+
   useEffect(() => {
     fetchPortfolio();
     fetchTrades();
     const interval = setInterval(() => { fetchPortfolio(); fetchTrades(); }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'history') checkSyncStatus();
+  }, [activeTab]);
 
   // Enrich positions with live prices from ChartGrid when available
   const enriched = positions.map((pos) => {
@@ -201,43 +227,67 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
 
       {/* Trade History Tab */}
       {activeTab === 'history' && (
-        <div className="space-y-2 max-h-96 overflow-y-auto">
-          {trades.length === 0 ? (
-            <p className="text-xs text-slate-500 py-2">No trade history</p>
-          ) : (
-            trades.map((t) => (
-              <div key={t.id} className="rounded-xl border border-slate-700/50 bg-slate-900/50 p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
+        <div className="space-y-2">
+          {/* Sync mismatch warning */}
+          {syncStatus?.alpaca_connected && !syncStatus?.in_sync && (
+            <div className="rounded-xl border border-yellow-600/40 bg-yellow-900/20 p-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-yellow-400">Trade history out of sync</p>
+                <p className="text-[10px] text-yellow-300/70 mt-0.5">
+                  {syncStatus.missing_count} Alpaca order{syncStatus.missing_count !== 1 ? 's' : ''} not in local history
+                </p>
+              </div>
+              <button
+                onClick={syncTrades}
+                disabled={syncing}
+                className="shrink-0 rounded-lg bg-yellow-600/30 hover:bg-yellow-600/50 border border-yellow-600/40 px-2.5 py-1 text-[10px] font-semibold text-yellow-300 transition disabled:opacity-50"
+              >
+                {syncing ? 'Syncing…' : 'Sync Now'}
+              </button>
+            </div>
+          )}
+          {syncStatus?.alpaca_connected && syncStatus?.in_sync && (
+            <p className="text-[10px] text-emerald-500/70 text-right">✓ In sync with Alpaca</p>
+          )}
+
+          <div className="max-h-96 overflow-y-auto space-y-2">
+            {trades.length === 0 ? (
+              <p className="text-xs text-slate-500 py-2">No trade history</p>
+            ) : (
+              trades.map((t) => (
+                <div key={t.id} className="rounded-xl border border-slate-700/50 bg-slate-900/50 p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded ${
+                          t.side === 'buy'
+                            ? 'bg-emerald-900/40 text-emerald-400'
+                            : 'bg-rose-900/40 text-rose-400'
+                        }`}
+                      >
+                        {t.side}
+                      </span>
+                      <span className="font-semibold text-sm">{t.symbol}</span>
+                      {symbolMeta[t.symbol]?.exchangeDisplay && (
+                        <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[t.symbol].exchangeDisplay}</span>
+                      )}
+                    </div>
                     <span
-                      className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded ${
-                        t.side === 'buy'
-                          ? 'bg-emerald-900/40 text-emerald-400'
-                          : 'bg-rose-900/40 text-rose-400'
+                      className={`text-xs ${
+                        t.status === 'filled' ? 'text-emerald-400' : t.status === 'pending' ? 'text-yellow-400' : 'text-slate-400'
                       }`}
                     >
-                      {t.side}
+                      {t.status}
                     </span>
-                    <span className="font-semibold text-sm">{t.symbol}</span>
-                    {symbolMeta[t.symbol]?.exchangeDisplay && (
-                      <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[t.symbol].exchangeDisplay}</span>
-                    )}
                   </div>
-                  <span
-                    className={`text-xs ${
-                      t.status === 'filled' ? 'text-emerald-400' : t.status === 'pending' ? 'text-yellow-400' : 'text-slate-400'
-                    }`}
-                  >
-                    {t.status}
-                  </span>
+                  <div className="flex justify-between text-xs text-slate-400">
+                    <span>{t.qty} @ {t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}</span>
+                    <span>{new Date(t.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-xs text-slate-400">
-                  <span>{t.qty} @ {t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}</span>
-                  <span>{new Date(t.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-              </div>
-            ))
-          )}
+              ))
+            )}
+          </div>
         </div>
       )}
 

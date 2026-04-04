@@ -372,11 +372,9 @@ class PortfolioService:
                 db_pos = result.scalar_one_or_none()
 
                 if db_pos:
-                    # Update existing position
                     db_pos.qty = pos.qty
                     db_pos.avg_cost = pos.avg_entry_price
                 else:
-                    # Create new position
                     db_pos = PortfolioPosition(
                         user_id=user_id,
                         symbol=pos.symbol,
@@ -392,4 +390,94 @@ class PortfolioService:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Failed to sync positions from Alpaca",
+            ) from exc
+
+    async def get_trade_sync_status(self, user_id: str) -> dict[str, object]:
+        """Compare Alpaca filled orders against local trades to detect divergence.
+
+        Returns:
+            {
+                "in_sync": bool,
+                "alpaca_count": int,        # filled orders in Alpaca
+                "local_count": int,         # locally tracked orders with an order_id
+                "missing_count": int,       # Alpaca orders absent from local DB
+                "alpaca_connected": bool,
+            }
+        """
+        if self.broker._client is None:
+            return {
+                "in_sync": True,
+                "alpaca_count": 0,
+                "local_count": 0,
+                "missing_count": 0,
+                "alpaca_connected": False,
+            }
+        try:
+            alpaca_orders = self.broker.get_orders(status="filled", limit=100)
+            alpaca_ids = {o.order_id for o in alpaca_orders}
+
+            existing_result = await self.db.execute(
+                select(Trade.order_id).where(
+                    Trade.user_id == user_id, Trade.order_id.isnot(None)
+                )
+            )
+            local_ids = {row[0] for row in existing_result.all()}
+
+            missing = alpaca_ids - local_ids
+            return {
+                "in_sync": len(missing) == 0,
+                "alpaca_count": len(alpaca_ids),
+                "local_count": len(local_ids),
+                "missing_count": len(missing),
+                "alpaca_connected": True,
+            }
+        except AlpacaBrokerServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to check sync status: {exc}",
+            ) from exc
+
+    async def sync_trades_from_alpaca(self, user_id: str) -> dict[str, object]:
+        """Import Alpaca filled orders that are not yet in the local trades table.
+
+        Only imports orders missing from local DB — existing records are untouched.
+        Returns the number of trades imported.
+        """
+        if self.broker._client is None:
+            return {"imported": 0, "alpaca_connected": False}
+        try:
+            alpaca_orders = self.broker.get_orders(status="filled", limit=100)
+
+            existing_result = await self.db.execute(
+                select(Trade.order_id).where(
+                    Trade.user_id == user_id, Trade.order_id.isnot(None)
+                )
+            )
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            imported = 0
+            for order in alpaca_orders:
+                if order.order_id in existing_ids:
+                    continue
+                self.db.add(
+                    Trade(
+                        user_id=user_id,
+                        symbol=order.symbol,
+                        order_id=order.order_id,
+                        side=order.side,
+                        qty=order.filled_qty,
+                        limit_price=order.limit_price,
+                        execution_price=order.filled_avg_price,
+                        status=order.status,
+                    )
+                )
+                imported += 1
+
+            await self.db.flush()
+            logger.info("trades_synced_from_alpaca", imported=imported)
+            return {"imported": imported, "alpaca_connected": True}
+        except AlpacaBrokerServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to sync trades: {exc}",
             ) from exc
