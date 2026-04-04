@@ -135,6 +135,7 @@ class AlpacaBrokerService:
                 "qty": qty,
                 "side": side,
                 "type": "limit" if limit_price else "market",
+                "time_in_force": "gtc",  # Good Till Cancelled — survives market-closed periods
             }
             if limit_price:
                 order_params["limit_price"] = limit_price
