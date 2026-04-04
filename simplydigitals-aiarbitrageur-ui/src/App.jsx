@@ -3,11 +3,13 @@ import WatchlistSidebar from './components/WatchlistSidebar';
 import ChartGrid from './components/ChartGrid';
 import TradePanel from './components/TradePanel';
 import PortfolioSummary from './components/PortfolioSummary';
+import ConnectionStatus from './components/ConnectionStatus';
 
 export default function App() {
   const [selectedSymbols, setSelectedSymbols] = useState(['AAPL', 'MSFT']);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [latestPrices, setLatestPrices] = useState({});
+  const [symbolMeta, setSymbolMeta] = useState({});
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -19,12 +21,15 @@ export default function App() {
               <p className="text-xs uppercase tracking-[0.35em] text-sky-400">AI Arbitrageur</p>
               <h1 className="text-2xl font-semibold sm:text-3xl">Trading Dashboard</h1>
             </div>
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm lg:hidden"
-            >
-              {sidebarOpen ? 'Hide' : 'Show'} Watchlist
-            </button>
+            <div className="flex items-center gap-3">
+              <ConnectionStatus />
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm lg:hidden"
+              >
+                {sidebarOpen ? 'Hide' : 'Show'} Watchlist
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -38,6 +43,7 @@ export default function App() {
               <WatchlistSidebar
                 selectedSymbols={selectedSymbols}
                 onSelectSymbols={setSelectedSymbols}
+                onSymbolMetaChange={setSymbolMeta}
               />
             </aside>
           )}
@@ -46,7 +52,7 @@ export default function App() {
           <main className="flex-1 space-y-6">
             {/* Charts Grid */}
             <section className="rounded-3xl border border-slate-700 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/20">
-              <ChartGrid selectedSymbols={selectedSymbols} onPricesUpdated={setLatestPrices} />
+              <ChartGrid selectedSymbols={selectedSymbols} onPricesUpdated={setLatestPrices} symbolMeta={symbolMeta} />
             </section>
 
             {/* Trade Panel */}
@@ -57,7 +63,7 @@ export default function App() {
 
           {/* Right Sidebar: Full-width mobile, Fixed 200px desktop */}
           <aside className="w-full rounded-3xl border border-slate-700 bg-slate-900/70 shadow-xl shadow-slate-950/20 lg:w-56 lg:flex-shrink-0">
-            <PortfolioSummary latestPrices={latestPrices} />
+            <PortfolioSummary latestPrices={latestPrices} symbolMeta={symbolMeta} />
           </aside>
         </div>
       </div>

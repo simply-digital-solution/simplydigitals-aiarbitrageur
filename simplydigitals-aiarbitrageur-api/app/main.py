@@ -84,6 +84,7 @@ def create_app() -> FastAPI:
     # Routers
     from app.modules.portfolio.router import router as portfolio_router
     from app.modules.prices.router import router as prices_router
+    from app.modules.status.router import router as status_router
     from app.modules.tickers.router import router as tickers_router
     from app.modules.tickers.router import watchlist_router
     from app.modules.triggers.router import router as triggers_router
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(prices_router, prefix=prefix)
     app.include_router(portfolio_router, prefix=prefix)
     app.include_router(triggers_router, prefix=prefix)
+    app.include_router(status_router, prefix=prefix)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
