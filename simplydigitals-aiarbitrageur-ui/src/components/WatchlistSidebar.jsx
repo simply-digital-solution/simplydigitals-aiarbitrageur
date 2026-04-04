@@ -3,7 +3,14 @@ import axios from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
-export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
+const EXCHANGE_NAMES = {
+  NMS: 'NASDAQ', NGM: 'NASDAQ', NCM: 'NASDAQ',
+  NYQ: 'NYSE', PCX: 'NYSE Arca', ASE: 'NYSE American',
+  GER: 'XETRA', TOR: 'TSX', MEX: 'BMV', LSE: 'LSE',
+};
+const exchLabel = (code) => (code ? (EXCHANGE_NAMES[code] || code) : null);
+
+export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols, onSymbolMetaChange }) {
   const [watchlist, setWatchlist] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -13,13 +20,16 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
   // Default watchlist (would come from API in production)
   useEffect(() => {
     const defaultWatchlist = [
-      { symbol: 'AAPL', name: 'Apple Inc.' },
-      { symbol: 'MSFT', name: 'Microsoft Corporation' },
-      { symbol: 'TSLA', name: 'Tesla Inc.' },
-      { symbol: 'GOOGL', name: 'Alphabet Inc.' },
-      { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+      { symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NMS' },
+      { symbol: 'MSFT', name: 'Microsoft Corporation', exchange: 'NMS' },
+      { symbol: 'TSLA', name: 'Tesla Inc.', exchange: 'NMS' },
+      { symbol: 'GOOGL', name: 'Alphabet Inc.', exchange: 'NMS' },
+      { symbol: 'AMZN', name: 'Amazon.com Inc.', exchange: 'NMS' },
     ];
     setWatchlist(defaultWatchlist);
+    const meta = {};
+    defaultWatchlist.forEach((t) => { meta[t.symbol] = { exchange: t.exchange, exchangeDisplay: exchLabel(t.exchange) }; });
+    onSymbolMetaChange?.(meta);
 
     // Fetch initial prices
     fetchPrices(defaultWatchlist.map((t) => t.symbol));
@@ -47,32 +57,41 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
     }
   };
 
-  // Search tickers
-  const handleSearch = async (query) => {
-    setSearchQuery(query);
-    if (query.trim().length < 1) {
+  // Search tickers (debounced)
+  useEffect(() => {
+    if (searchQuery.trim().length < 1) {
       setSearchResults([]);
       return;
     }
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const resp = await axios.get(`${API_BASE_URL}/tickers/search`, {
+          params: { q: searchQuery.trim() },
+        });
+        setSearchResults(resp.data || []);
+      } catch (err) {
+        console.error('Error searching tickers:', err);
+        setSearchResults([]);
+      }
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-    setLoading(true);
-    try {
-      const resp = await axios.get(`${API_BASE_URL}/tickers/search`, {
-        params: { q: query, limit: 5 },
-      });
-      setSearchResults(resp.data.tickers || []);
-    } catch (err) {
-      console.error('Error searching tickers:', err);
-      setSearchResults([]);
-    }
-    setLoading(false);
+  const handleSearch = (query) => {
+    setSearchQuery(query);
   };
 
   // Add ticker to watchlist
   const handleAddTicker = (ticker) => {
     if (!watchlist.find((t) => t.symbol === ticker.symbol)) {
-      setWatchlist([...watchlist, ticker]);
+      const updated = [...watchlist, ticker];
+      setWatchlist(updated);
       fetchPrices([ticker.symbol]);
+      const meta = {};
+      updated.forEach((t) => { meta[t.symbol] = { exchange: t.exchange, exchangeDisplay: t.exchange_display || exchLabel(t.exchange) }; });
+      onSymbolMetaChange?.(meta);
     }
     setSearchQuery('');
     setSearchResults([]);
@@ -122,8 +141,20 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
                 onClick={() => handleAddTicker(ticker)}
                 className="w-full text-left rounded-lg bg-slate-900 px-2 py-2 text-sm hover:bg-sky-900 transition"
               >
-                <span className="font-medium">{ticker.symbol}</span>
-                <span className="text-xs text-slate-400 ml-2">{ticker.name}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{ticker.symbol}</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {ticker.type_display && (
+                      <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                        {ticker.type_display}
+                      </span>
+                    )}
+                    {ticker.exchange_display && (
+                      <span className="text-xs text-sky-400">{ticker.exchange_display}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-xs text-slate-400 truncate mt-0.5">{ticker.name}</div>
               </button>
             ))}
           </div>
@@ -155,7 +186,14 @@ export default function WatchlistSidebar({ selectedSymbols, onSelectSymbols }) {
                   role="button"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{ticker.symbol}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-sm">{ticker.symbol}</span>
+                      {(ticker.exchange_display || exchLabel(ticker.exchange)) && (
+                        <span className="text-[10px] text-sky-400 leading-none">
+                          {ticker.exchange_display || exchLabel(ticker.exchange)}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500 truncate">${price.toFixed(2)}</div>
                   </div>
                   <button

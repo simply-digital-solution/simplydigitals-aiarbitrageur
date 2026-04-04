@@ -72,8 +72,9 @@ const AXIS_PROPS = {
   stroke: 'rgba(71, 85, 105, 1)',
 };
 
-export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
+export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta = {} }) {
   const [chartsData, setChartsData] = useState({});
+  const [prevCloses, setPrevCloses] = useState({});
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('pct');
 
@@ -85,10 +86,14 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
     setLoading(true);
     try {
       const data = {};
+      const closes = {};
       for (const symbol of selectedSymbols) {
         try {
-          const resp = await axios.get(`${API_BASE_URL}/prices/${symbol}/intraday-1min?limit=60`);
-          data[symbol] = (resp.data || [])
+          const [intradayResp, histResp] = await Promise.all([
+            axios.get(`${API_BASE_URL}/prices/${symbol}/intraday-1min?limit=60`),
+            axios.get(`${API_BASE_URL}/prices/${symbol}/history?range=5D`),
+          ]);
+          data[symbol] = (intradayResp.data || [])
             .map((bar) => ({
               time: new Date(bar.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
               ts: bar.ts,
@@ -96,11 +101,28 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
               close: bar.close,
             }))
             .sort((a, b) => new Date(a.ts) - new Date(b.ts));
+          const histBars = (histResp.data || []).sort((a, b) => new Date(a.date) - new Date(b.date));
+          if (histBars.length > 0) {
+            closes[symbol] = histBars[histBars.length - 1].close;
+          }
         } catch {
           data[symbol] = generateMockData();
         }
       }
       setChartsData(data);
+      setPrevCloses(closes);
+      const priceMap = {};
+      for (const sym of selectedSymbols) {
+        const bars = data[sym] || [];
+        if (bars.length > 0) {
+          priceMap[sym] = {
+            current: bars[bars.length - 1].close,
+            dayOpen: bars[0].open,
+            prevClose: closes[sym] ?? null,
+          };
+        }
+      }
+      onPricesUpdated?.(priceMap);
     } catch (err) {
       console.error('Error fetching chart data:', err);
     }
@@ -143,7 +165,11 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
         for (const sym of selectedSymbols) {
           const bars = current[sym] || [];
           if (bars.length > 0) {
-            priceMap[sym] = { current: bars[bars.length - 1].close, dayOpen: bars[0].open };
+            priceMap[sym] = {
+              current: bars[bars.length - 1].close,
+              dayOpen: bars[0].open,
+              prevClose: prevCloses[sym] ?? null,
+            };
           }
         }
         onPricesUpdated?.(priceMap);
@@ -214,6 +240,9 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
                     <>
                       <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                       <span>{label}</span>
+                      {symbolMeta[id]?.exchangeDisplay && (
+                        <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[id].exchangeDisplay}</span>
+                      )}
                       {latestClose > 0 && (
                         <span className={`text-xs ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {change >= 0 ? '+' : ''}{change}%
@@ -235,6 +264,9 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated }) {
                     <div key={sym} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5">
                       <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
                       <span className="font-semibold text-white">{sym}</span>
+                      {symbolMeta[sym]?.exchangeDisplay && (
+                        <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[sym].exchangeDisplay}</span>
+                      )}
                       <span className="text-sm text-slate-400">${latestClose.toFixed(2)}</span>
                       <span className={`text-sm font-medium ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {change >= 0 ? '+' : ''}{change}%

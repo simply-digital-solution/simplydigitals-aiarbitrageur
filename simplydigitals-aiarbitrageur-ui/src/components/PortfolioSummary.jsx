@@ -10,7 +10,7 @@ const sign = (n) => (n >= 0 ? '+' : '');
 const plClass = (n) => (n >= 0 ? 'text-emerald-400' : 'text-rose-400');
 
 
-export default function PortfolioSummary({ latestPrices = {} }) {
+export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} }) {
   const [positions, setPositions] = useState([]);
   const [account, setAccount] = useState({ cash: null, buying_power: null });
   const [trades, setTrades] = useState([]);
@@ -57,9 +57,9 @@ export default function PortfolioSummary({ latestPrices = {} }) {
     const costBasis = pos.avg_cost * pos.qty;
     const totalPnl = currentValue - costBasis;
     const totalPnlPct = costBasis ? (totalPnl / costBasis) * 100 : 0;
-    // Day P&L: (current - dayOpen) * qty
     const dayPnl = (live.current - live.dayOpen) * pos.qty;
-    return { ...pos, current_price: currentPrice, current_value: currentValue, pnl: totalPnl, pnl_pct: totalPnlPct, day_pnl: dayPnl };
+    const yesterdayValue = live.prevClose != null ? live.prevClose * pos.qty : null;
+    return { ...pos, current_price: currentPrice, current_value: currentValue, pnl: totalPnl, pnl_pct: totalPnlPct, day_pnl: dayPnl, yesterday_value: yesterdayValue };
   });
 
   // Fallback for positions without live prices: use backend pnl
@@ -150,12 +150,33 @@ export default function PortfolioSummary({ latestPrices = {} }) {
             enriched.map((pos) => (
               <div key={pos.symbol} className="rounded-xl border border-slate-700/50 bg-slate-900/50 p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-sm">{pos.symbol}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-sm">{pos.symbol}</span>
+                    {symbolMeta[pos.symbol]?.exchangeDisplay && (
+                      <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[pos.symbol].exchangeDisplay}</span>
+                    )}
+                  </div>
                   <span className="text-xs text-slate-400">{pos.qty} shares</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-400">Avg ${fmt(pos.avg_cost)}</span>
                   <span className="text-slate-300">${fmt(pos.current_price)}</span>
+                </div>
+                <div className="flex justify-between text-xs border-t border-slate-700/50 pt-1.5">
+                  <span className="text-slate-400">Purchase Value</span>
+                  <span className="text-slate-300">${fmt(pos.avg_cost * pos.qty)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-400">Yesterday Value</span>
+                  <span className="text-slate-300">
+                    {pos.yesterday_value != null ? `$${fmt(pos.yesterday_value)}` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-400">Market Value</span>
+                  <span className="text-slate-300">
+                    {pos.current_value != null ? `$${fmt(pos.current_value)}` : '—'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-xs border-t border-slate-700/50 pt-1.5">
                   <span className="text-slate-400">Day P&L</span>
@@ -198,6 +219,9 @@ export default function PortfolioSummary({ latestPrices = {} }) {
                       {t.side}
                     </span>
                     <span className="font-semibold text-sm">{t.symbol}</span>
+                    {symbolMeta[t.symbol]?.exchangeDisplay && (
+                      <span className="text-[10px] text-sky-400 leading-none">{symbolMeta[t.symbol].exchangeDisplay}</span>
+                    )}
                   </div>
                   <span
                     className={`text-xs ${
