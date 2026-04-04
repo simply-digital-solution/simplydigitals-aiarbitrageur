@@ -138,7 +138,7 @@ class PortfolioService:
         return limits
 
     async def _calculate_portfolio_exposure(self, user_id: str) -> dict[str, float]:
-        """Calculate total portfolio exposure and account value.
+        """Calculate total portfolio exposure and account value from local DB.
 
         Returns:
             {
@@ -147,20 +147,21 @@ class PortfolioService:
                 'cash': float,
             }
         """
-        try:
-            account = self.broker.get_account()
-            current_exposure = account.portfolio_value - account.cash
-            return {
-                "total_value": account.portfolio_value,
-                "current_exposure": max(current_exposure, 0),
-                "cash": account.cash,
-            }
-        except AlpacaBrokerServiceError as exc:
-            logger.error("portfolio_exposure_fetch_failed", error=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Failed to calculate portfolio exposure",
-            ) from exc
+        account = await self._get_or_create_account(user_id)
+        result = await self.db.execute(
+            select(PortfolioPosition).where(PortfolioPosition.user_id == user_id)
+        )
+        positions = list(result.scalars().all())
+        current_exposure = sum(
+            ((_live_price(p.symbol) or p.avg_cost) * p.qty)
+            for p in positions if p.qty > 0
+        )
+        total_value = account.cash + current_exposure
+        return {
+            "total_value": total_value,
+            "current_exposure": current_exposure,
+            "cash": account.cash,
+        }
 
     async def execute_trade_with_limits(
         self, req: TradeWithLimitsRequest, user_id: str
@@ -224,43 +225,100 @@ class PortfolioService:
                 ),
             )
 
-        # All limits passed; submit to Alpaca
-        try:
-            order_info = self.broker.submit_order(
-                symbol=symbol,
-                qty=req.qty,
-                side=req.side,
-                limit_price=req.limit_price,
-            )
+        # All limits passed; submit to Alpaca if available, else paper-trade locally
+        execution_price = float(current_price)
+        order_id: str | None = None
+        order_status = "filled"
 
-            # Store trade record with order tracking
-            trade = Trade(
-                user_id=user_id,
-                symbol=symbol,
-                order_id=order_info.order_id,
-                side=req.side,
-                qty=req.qty,
-                limit_price=req.limit_price,
-                status=order_info.status,
-                execution_price=order_info.filled_avg_price,
-            )
-            self.db.add(trade)
-            await self.db.flush()
-
+        if self.broker._client is not None:
+            try:
+                order_info = self.broker.submit_order(
+                    symbol=symbol,
+                    qty=req.qty,
+                    side=req.side,
+                    limit_price=req.limit_price,
+                )
+                execution_price = order_info.filled_avg_price or execution_price
+                order_id = order_info.order_id
+                order_status = order_info.status
+                logger.info(
+                    "trade_with_limits_executed",
+                    symbol=symbol,
+                    qty=req.qty,
+                    side=req.side,
+                    order_id=order_id,
+                )
+            except AlpacaBrokerServiceError as exc:
+                logger.error("alpaca_order_submit_failed", error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to submit order: {exc}",
+                ) from exc
+        else:
             logger.info(
-                "trade_with_limits_executed",
+                "trade_paper_executed",
                 symbol=symbol,
                 qty=req.qty,
                 side=req.side,
-                order_id=order_info.order_id,
+                reason="alpaca_unavailable",
             )
-            return trade
-        except AlpacaBrokerServiceError as exc:
-            logger.error("alpaca_order_submit_failed", error=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Failed to submit order: {exc}",
-            ) from exc
+
+        # Update local account / position (paper trade ledger)
+        account = await self._get_or_create_account(user_id)
+        effective_price = req.limit_price if req.limit_price else execution_price
+        trade_value = req.qty * effective_price
+
+        pos_result = await self.db.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.user_id == user_id,
+                PortfolioPosition.symbol == symbol,
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+
+        if req.side == "buy":
+            if account.cash < trade_value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient cash: have ${account.cash:.2f}, need ${trade_value:.2f}",
+                )
+            account.cash -= trade_value
+            if position:
+                total_cost = position.avg_cost * position.qty + effective_price * req.qty
+                position.qty += req.qty
+                position.avg_cost = total_cost / position.qty
+            else:
+                position = PortfolioPosition(
+                    user_id=user_id, symbol=symbol, qty=req.qty, avg_cost=effective_price
+                )
+                self.db.add(position)
+        else:
+            if not position or position.qty < req.qty:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Insufficient position: have {position.qty if position else 0}, "
+                        f"selling {req.qty}"
+                    ),
+                )
+            position.qty -= req.qty
+            account.cash += trade_value
+            if position.qty == 0:
+                await self.db.delete(position)
+
+        trade = Trade(
+            user_id=user_id,
+            symbol=symbol,
+            order_id=order_id,
+            side=req.side,
+            qty=req.qty,
+            limit_price=req.limit_price,
+            status=order_status,
+            execution_price=execution_price,
+        )
+        self.db.add(trade)
+        await self.db.flush()
+        return trade
 
     async def _get_or_create_account(self, user_id: str) -> UserAccount:
         result = await self.db.execute(
