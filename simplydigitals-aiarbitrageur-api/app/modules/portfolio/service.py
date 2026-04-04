@@ -274,7 +274,7 @@ class PortfolioService:
         await self.db.flush()
         return account
 
-    async def get_account_info(self, user_id: str) -> dict:
+    async def get_account_info(self, user_id: str) -> dict[str, object]:
         account = await self._get_or_create_account(user_id)
         result = await self.db.execute(
             select(PortfolioPosition).where(PortfolioPosition.user_id == user_id)

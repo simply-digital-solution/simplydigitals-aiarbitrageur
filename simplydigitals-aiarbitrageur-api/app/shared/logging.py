@@ -14,7 +14,7 @@ def configure_logging() -> None:
     settings = get_settings()
     level = logging.DEBUG if settings.ENVIRONMENT == "development" else logging.INFO
 
-    shared_processors: list = [
+    shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
@@ -33,5 +33,5 @@ def configure_logging() -> None:
     )
 
 
-def get_logger(name: str) -> structlog.BoundLogger:
-    return structlog.get_logger(name)
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
+    return structlog.get_logger(name)  # type: ignore[no-any-return]

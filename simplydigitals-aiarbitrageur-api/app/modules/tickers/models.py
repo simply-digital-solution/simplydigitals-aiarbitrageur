@@ -30,9 +30,11 @@ class Ticker(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     watchlist_items: Mapped[list[WatchlistItem]] = relationship(back_populates="ticker")
-    closing_prices: Mapped[list] = relationship("ClosingPrice", back_populates="ticker")
-    intraday_prices: Mapped[list] = relationship("IntradayPrice", back_populates="ticker")
-    intraday_1min_prices: Mapped[list] = relationship("IntradayPrice1Min", back_populates="ticker")
+    closing_prices: Mapped[list[object]] = relationship("ClosingPrice", back_populates="ticker")
+    intraday_prices: Mapped[list[object]] = relationship("IntradayPrice", back_populates="ticker")
+    intraday_1min_prices: Mapped[list[object]] = relationship(
+        "IntradayPrice1Min", back_populates="ticker"
+    )
 
 
 class WatchlistItem(Base):

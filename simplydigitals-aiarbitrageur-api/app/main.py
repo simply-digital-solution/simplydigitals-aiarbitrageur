@@ -32,7 +32,7 @@ def _import_all_models() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[type-arg]
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _import_all_models()
     if not settings.is_production:
         async with engine.begin() as conn:
@@ -59,7 +59,7 @@ def create_app() -> FastAPI:
         default_limits=[f"{settings.RATE_LIMIT_PER_MINUTE}/minute"],
     )
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     # CORS
     app.add_middleware(

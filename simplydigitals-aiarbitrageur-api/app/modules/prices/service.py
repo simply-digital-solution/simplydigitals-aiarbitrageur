@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import yfinance as yf
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.prices.models import ClosingPrice, IntradayPrice, IntradayPrice1Min
@@ -32,7 +33,8 @@ _RANGE_MAP = {
 
 
 def _to_utc(ts: object) -> datetime:
-    dt = ts.to_pydatetime()  # type: ignore[union-attr]
+    import pandas as pd
+    dt: datetime = pd.Timestamp(ts).to_pydatetime()
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
@@ -171,11 +173,11 @@ class PriceService:
     async def purge_old_intraday(db: AsyncSession) -> int:
         """Delete intraday bars older than INTRADAY_RETENTION_DAYS. Returns row count."""
         cutoff = datetime.now(UTC) - timedelta(days=settings.INTRADAY_RETENTION_DAYS)
-        result = await db.execute(
+        result: CursorResult[tuple[()]] = await db.execute(  # type: ignore[assignment]
             delete(IntradayPrice).where(IntradayPrice.ts < cutoff)
         )
         await db.commit()
-        count = result.rowcount
+        count = int(result.rowcount)
         logger.info("intraday_purged", rows=count)
         return count
 
@@ -281,11 +283,11 @@ class PriceService:
     async def purge_old_intraday_1min(db: AsyncSession) -> int:
         """Delete 1-min intraday bars older than INTRADAY_RETENTION_DAYS. Returns row count."""
         cutoff = datetime.now(UTC) - timedelta(days=settings.INTRADAY_RETENTION_DAYS)
-        result = await db.execute(
+        result: CursorResult[tuple[()]] = await db.execute(  # type: ignore[assignment]
             delete(IntradayPrice1Min).where(IntradayPrice1Min.ts < cutoff)
         )
         await db.commit()
-        count = result.rowcount
+        count = int(result.rowcount)
         logger.info("intraday_1min_purged", rows=count)
         return count
 

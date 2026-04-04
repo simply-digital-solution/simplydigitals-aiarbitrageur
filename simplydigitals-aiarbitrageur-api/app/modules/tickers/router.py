@@ -20,7 +20,7 @@ async def search(
     _: str = Depends(get_current_user_id),
 ) -> list[TickerSearchResult]:
     results = search_tickers(q)
-    return [TickerSearchResult(**r) for r in results]
+    return [TickerSearchResult(**r) for r in results]  # type: ignore[arg-type]
 
 
 @watchlist_router.get("", response_model=list[WatchlistItemRead])

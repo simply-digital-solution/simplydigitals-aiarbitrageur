@@ -13,7 +13,7 @@ from app.shared.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _get_or_create_ticker_data(symbol: str) -> dict:
+def _get_or_create_ticker_data(symbol: str) -> dict[str, object]:
     """Fetch ticker metadata from yfinance."""
     info = yf.Ticker(symbol).info
     if not info or info.get("regularMarketPrice") is None and info.get("currentPrice") is None:
@@ -28,7 +28,7 @@ def _get_or_create_ticker_data(symbol: str) -> dict:
     }
 
 
-def search_tickers(query: str) -> list[dict]:
+def search_tickers(query: str) -> list[dict[str, object]]:
     """Search tickers using yfinance screen (best effort)."""
     try:
         results = yf.Search(query, max_results=8).quotes

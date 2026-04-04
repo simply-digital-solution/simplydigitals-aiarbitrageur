@@ -53,7 +53,7 @@ async def execute_trade_with_limits(
 async def get_account(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
-) -> dict:
+) -> dict[str, object]:
     return await PortfolioService(db).get_account_info(user_id)
 
 
