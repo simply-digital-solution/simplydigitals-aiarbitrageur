@@ -86,7 +86,7 @@ class AlpacaBrokerService:
         try:
             account = self._client.get_account()
             return AccountInfo(
-                account_value=float(account.account_value),
+                account_value=float(account.equity),
                 buying_power=float(account.buying_power),
                 cash=float(account.cash),
                 portfolio_value=float(account.portfolio_value),
