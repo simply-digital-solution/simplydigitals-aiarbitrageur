@@ -71,7 +71,7 @@ select = ["E", "W", "F", "I", "B", "UP", "N", "ANN"]
 ignore = ["ANN101", "ANN102", "ANN401", "B008", "F821", "ANN202"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S"]
+"tests/**" = ["ANN", "S", "E501"]
 "migrations/**" = ["ANN", "E501"]
 
 [tool.mypy]

@@ -6,6 +6,7 @@ import yfinance as yf
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.modules.tickers.models import Ticker, WatchlistItem
 from app.shared.logging import get_logger
@@ -29,7 +30,7 @@ def _get_or_create_ticker_data(symbol: str) -> dict[str, object]:
 
 
 def search_tickers(query: str) -> list[dict[str, object]]:
-    """Search tickers using yfinance screen (best effort)."""
+    """Search tickers by symbol or company name using yfinance."""
     try:
         results = yf.Search(query, max_results=8).quotes
         return [
@@ -37,6 +38,8 @@ def search_tickers(query: str) -> list[dict[str, object]]:
                 "symbol": r.get("symbol", ""),
                 "name": r.get("longname") or r.get("shortname") or r.get("symbol", ""),
                 "exchange": r.get("exchange"),
+                "exchange_display": r.get("exchDisp") or r.get("exchange"),
+                "type_display": r.get("typeDisp"),
             }
             for r in results
             if r.get("symbol")
@@ -67,6 +70,7 @@ class TickerService:
             select(WatchlistItem)
             .where(WatchlistItem.user_id == user_id)
             .order_by(WatchlistItem.added_at.desc())
+            .options(selectinload(WatchlistItem.ticker))
         )
         return list(result.scalars().all())
 
@@ -83,6 +87,7 @@ class TickerService:
         item = WatchlistItem(user_id=user_id, ticker_id=ticker.id)
         self.db.add(item)
         await self.db.flush()
+        await self.db.refresh(item, ["ticker"])
         return item
 
     async def remove_from_watchlist(self, symbol: str, user_id: str) -> None:
@@ -95,3 +100,4 @@ class TickerService:
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in watchlist")
         await self.db.delete(item)
+        await self.db.flush()
