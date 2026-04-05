@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { jsPDF } from 'jspdf';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
@@ -7,6 +8,90 @@ const fmt = (n) =>
   (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const EMPTY_FILTERS = { side: '', symbol: '', qty: '', price: '', value: '', status: '', date: '' };
+
+const COLUMNS = ['Side', 'Symbol', 'Qty', 'Price', 'Value', 'Status', 'Date', 'Time', 'Order ID'];
+
+function rowData(t, symbolMeta) {
+  const ts = new Date(t.created_at);
+  const exchange = symbolMeta[t.symbol]?.exchangeDisplay || '';
+  const symbol = exchange ? `${t.symbol} (${exchange})` : t.symbol;
+  return [
+    t.side,
+    symbol,
+    t.qty,
+    t.execution_price != null ? (t.execution_price).toFixed(2) : '',
+    ((t.execution_price || 0) * t.qty).toFixed(2),
+    t.status,
+    ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }),
+    ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }),
+    t.order_id || 'paper',
+  ];
+}
+
+function downloadCSV(rows, symbolMeta) {
+  const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [COLUMNS.map(escape).join(',')];
+  rows.forEach((t) => lines.push(rowData(t, symbolMeta).map(escape).join(',')));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `trade_blotter_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadPDF(rows, symbolMeta) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const margin = 12;
+  const pageW = doc.internal.pageSize.getWidth();
+
+  // Title
+  doc.setFontSize(14);
+  doc.setTextColor(30, 41, 59);
+  doc.text('Trade Blotter', margin, margin + 4);
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Exported ${new Date().toLocaleString('en-AU')}  ·  ${rows.length} trade${rows.length !== 1 ? 's' : ''}`, margin, margin + 10);
+
+  // Column widths (mm) — must sum to pageW - 2*margin
+  const colW = [18, 38, 14, 22, 22, 22, 28, 18, 50];
+  const rowH = 7;
+  let y = margin + 16;
+
+  // Header row
+  doc.setFillColor(15, 23, 42);
+  doc.rect(margin, y, pageW - 2 * margin, rowH, 'F');
+  doc.setFontSize(7);
+  doc.setTextColor(148, 163, 184);
+  let x = margin + 2;
+  COLUMNS.forEach((col, i) => { doc.text(col, x, y + 4.5); x += colW[i]; });
+  y += rowH;
+
+  // Data rows
+  rows.forEach((t, idx) => {
+    if (y + rowH > doc.internal.pageSize.getHeight() - margin) {
+      doc.addPage();
+      y = margin;
+    }
+    if (idx % 2 === 0) {
+      doc.setFillColor(30, 41, 59);
+      doc.rect(margin, y, pageW - 2 * margin, rowH, 'F');
+    }
+    doc.setFontSize(7);
+    doc.setTextColor(t.side === 'buy' ? 52 : 248, t.side === 'buy' ? 211 : 113, t.side === 'buy' ? 153 : 113);
+    const cells = rowData(t, symbolMeta);
+    x = margin + 2;
+    cells.forEach((cell, i) => {
+      if (i > 0) doc.setTextColor(203, 213, 225);
+      doc.text(String(cell), x, y + 4.5, { maxWidth: colW[i] - 2 });
+      x += colW[i];
+    });
+    y += rowH;
+  });
+
+  doc.save(`trade_blotter_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
 
 function FilterInput({ value, onChange, align = 'left', placeholder = '…' }) {
   return (
@@ -26,6 +111,8 @@ export default function TradeBlotter({ symbolMeta = {} }) {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const downloadRef = useRef(null);
 
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
   const clearFilters = () => setFilters(EMPTY_FILTERS);
@@ -65,6 +152,13 @@ export default function TradeBlotter({ symbolMeta = {} }) {
   useEffect(() => {
     fetchTrades();
     checkSyncStatus();
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e) => { if (downloadRef.current && !downloadRef.current.contains(e.target)) setDownloadOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   // Apply filters — all are partial, case-insensitive string matches
@@ -108,6 +202,35 @@ export default function TradeBlotter({ symbolMeta = {} }) {
               Clear Filters
             </button>
           )}
+
+          {/* Download dropdown */}
+          <div className="relative" ref={downloadRef}>
+            <button
+              onClick={() => setDownloadOpen((o) => !o)}
+              disabled={filtered.length === 0}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 transition disabled:opacity-40 flex items-center gap-1.5"
+            >
+              ↓ Download
+              <span className="text-slate-500 text-[10px]">▾</span>
+            </button>
+            {downloadOpen && (
+              <div className="absolute right-0 mt-1 w-36 rounded-xl border border-slate-700 bg-slate-800 shadow-xl z-20 overflow-hidden">
+                <button
+                  onClick={() => { downloadCSV(filtered, symbolMeta); setDownloadOpen(false); }}
+                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition"
+                >
+                  CSV (.csv)
+                </button>
+                <button
+                  onClick={() => { downloadPDF(filtered, symbolMeta); setDownloadOpen(false); }}
+                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition border-t border-slate-700/60"
+                >
+                  PDF (.pdf)
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => { fetchTrades(); checkSyncStatus(); }}
             disabled={loading}
