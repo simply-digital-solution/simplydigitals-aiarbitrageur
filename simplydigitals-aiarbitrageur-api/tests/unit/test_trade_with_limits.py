@@ -84,7 +84,7 @@ async def test_trade_with_limits_paper_trade_status(client: AsyncClient, auth_he
         headers=auth_headers,
     )
     assert response.status_code == 201
-    assert response.json()["status"] == "filled"
+    assert response.json()["status"] == "accepted"
 
 
 @pytest.mark.asyncio

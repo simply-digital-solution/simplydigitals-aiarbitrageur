@@ -89,6 +89,31 @@ async def get_trade_sync_status(
     return await PortfolioService(db).get_trade_sync_status(user_id)
 
 
+@router.post("/trades/{trade_id}/cancel", response_model=TradeWithStatusRead)
+async def cancel_trade(
+    trade_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> TradeWithStatusRead:
+    """Cancel a not_sent or reached trade, reversing local cash/position changes."""
+    trade = await PortfolioService(db).cancel_trade(trade_id, user_id)
+    return TradeWithStatusRead.model_validate(trade)
+
+
+@router.get("/trades/{trade_id}/status", response_model=TradeWithStatusRead)
+async def get_trade_status(
+    trade_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> TradeWithStatusRead:
+    """Poll Alpaca for the latest status of a single trade and update the local record.
+
+    Call this after booking a trade to track not_sent → reached → accepted transitions.
+    """
+    trade = await PortfolioService(db).refresh_trade_status(trade_id, user_id)
+    return TradeWithStatusRead.model_validate(trade)
+
+
 @router.post("/sync-trades", status_code=200)
 async def sync_trades_from_alpaca(
     db: AsyncSession = Depends(get_db),

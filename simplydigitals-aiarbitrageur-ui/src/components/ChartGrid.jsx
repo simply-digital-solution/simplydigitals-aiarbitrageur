@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
   AreaChart,
@@ -77,9 +77,74 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta
   const [prevCloses, setPrevCloses] = useState({});
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('pct');
+  const [chartScale, setChartScale] = useState(1);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const pctScrollRef = useRef(null);
+  const tickerScrollRef = useRef(null);
+  const containerRef = useRef(null);
+  const pinchStartDistRef = useRef(null);
+  const pinchStartScaleRef = useRef(1);
 
-  // Reset to % Change tab when symbols change
-  useEffect(() => { setActiveTab('pct'); }, [selectedSymbols]);
+  // At scale 1 the chart fills the container exactly (undefined = no min-width override)
+  const chartMinWidth = chartScale > 1 ? containerWidth * chartScale : undefined;
+
+  // Observe container width so scale multiplier is based on real pixels
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const activeScrollRef = activeTab === 'pct' ? pctScrollRef : tickerScrollRef;
+
+  const scrollToRight = () => {
+    const el = activeScrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  };
+
+  // Attach pinch handlers to whichever scroll container is active
+  useEffect(() => {
+    const el = activeScrollRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 2) return;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStartDistRef.current = Math.hypot(dx, dy);
+      pinchStartScaleRef.current = chartScale;
+    };
+
+    const onTouchMove = (e) => {
+      if (e.touches.length !== 2 || pinchStartDistRef.current === null) return;
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const ratio = dist / pinchStartDistRef.current;
+      const next = Math.min(Math.max(pinchStartScaleRef.current * ratio, 1), 5);
+      setChartScale(next);
+    };
+
+    const onTouchEnd = () => { pinchStartDistRef.current = null; };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [activeTab, chartScale]);
+
+  // Reset scale + tab when symbols change
+  useEffect(() => { setActiveTab('pct'); setChartScale(1); }, [selectedSymbols]);
+
+  // Scroll to right whenever data, tab, or scale changes
+  useEffect(() => { scrollToRight(); }, [activeTab, chartsData, chartScale]);
 
   const fetchChartDataInitial = async () => {
     if (selectedSymbols.length === 0) return;
@@ -220,8 +285,23 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta
         </div>
       ) : (
         <div className="rounded-2xl border border-slate-700 bg-slate-950/60">
-          {/* Tab Bar */}
-          <div className="flex overflow-x-auto border-b border-slate-700">
+          {/* Mobile: ticker dropdown */}
+          <div className="block sm:hidden border-b border-slate-700 p-3">
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value)}
+              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-sky-500"
+            >
+              {tabs.map(({ id, label, change }) => (
+                <option key={id} value={id}>
+                  {id === 'pct' ? '% Change (All)' : `${label}${change !== undefined ? ` (${change >= 0 ? '+' : ''}${change}%)` : ''}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Desktop: tab bar */}
+          <div className="hidden sm:flex overflow-x-auto border-b border-slate-700">
             {tabs.map(({ id, label, color, latestClose, change }) => {
               const isActive = activeTab === id;
               return (
@@ -255,7 +335,7 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta
             })}
           </div>
 
-          <div className="p-4">
+          <div ref={containerRef} className="p-4">
             {/* % Change tab — overlaid multi-ticker chart */}
             {activeTab === 'pct' && (
               <>
@@ -274,34 +354,38 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta
                     </div>
                   ))}
                 </div>
-                <ResponsiveContainer width="100%" height={320}>
-                  <AreaChart data={merged}>
-                    <defs>
-                      {stats.map(({ sym, color }) => (
-                        <linearGradient key={sym} id={`gradient-pct-${sym}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-                          <stop offset="95%" stopColor={color} stopOpacity={0} />
-                        </linearGradient>
-                      ))}
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(71, 85, 105, 0.3)" />
-                    <XAxis dataKey="time" {...AXIS_PROPS} />
-                    <YAxis tickFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`} {...AXIS_PROPS} />
-                    <Tooltip
-                      {...TOOLTIP_STYLE}
-                      formatter={(value, name) => [`${value >= 0 ? '+' : ''}${value}%`, name]}
-                      labelFormatter={(label) => `Time: ${label}`}
-                    />
-                    <Legend
-                      wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-                      formatter={(value) => <span style={{ color: 'rgba(226, 232, 240, 1)' }}>{value}</span>}
-                    />
-                    {stats.map(({ sym, color }) => (
-                      <Area key={sym} type="monotone" dataKey={sym} stroke={color} strokeWidth={2}
-                        fill={`url(#gradient-pct-${sym})`} connectNulls dot={false} />
-                    ))}
-                  </AreaChart>
-                </ResponsiveContainer>
+                <div ref={pctScrollRef} className="overflow-x-auto -mx-1 px-1">
+                  <div style={{ minWidth: chartMinWidth }}>
+                    <ResponsiveContainer width="100%" height={320}>
+                      <AreaChart data={merged}>
+                        <defs>
+                          {stats.map(({ sym, color }) => (
+                            <linearGradient key={sym} id={`gradient-pct-${sym}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+                              <stop offset="95%" stopColor={color} stopOpacity={0} />
+                            </linearGradient>
+                          ))}
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(71, 85, 105, 0.3)" />
+                        <XAxis dataKey="time" {...AXIS_PROPS} />
+                        <YAxis tickFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`} {...AXIS_PROPS} />
+                        <Tooltip
+                          {...TOOLTIP_STYLE}
+                          formatter={(value, name) => [`${value >= 0 ? '+' : ''}${value}%`, name]}
+                          labelFormatter={(label) => `Time: ${label}`}
+                        />
+                        <Legend
+                          wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
+                          formatter={(value) => <span style={{ color: 'rgba(226, 232, 240, 1)' }}>{value}</span>}
+                        />
+                        {stats.map(({ sym, color }) => (
+                          <Area key={sym} type="monotone" dataKey={sym} stroke={color} strokeWidth={2}
+                            fill={`url(#gradient-pct-${sym})`} connectNulls dot={false} activeDot={false} />
+                        ))}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </>
             )}
 
@@ -318,26 +402,30 @@ export default function ChartGrid({ selectedSymbols, onPricesUpdated, symbolMeta
                   </span>
                 </div>
                 {activeData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <AreaChart data={activeData}>
-                      <defs>
-                        <linearGradient id={`gradient-${activeStat.sym}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={activeStat.color} stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={activeStat.color} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(71, 85, 105, 0.3)" />
-                      <XAxis dataKey="time" {...AXIS_PROPS} />
-                      <YAxis domain={['dataMin - 1', 'dataMax + 1']} tickFormatter={(v) => `$${v.toFixed(2)}`} {...AXIS_PROPS} />
-                      <Tooltip
-                        {...TOOLTIP_STYLE}
-                        formatter={(value) => [`$${value.toFixed(2)}`, 'Price']}
-                        labelFormatter={(label) => `Time: ${label}`}
-                      />
-                      <Area type="monotone" dataKey="close" stroke={activeStat.color} strokeWidth={2}
-                        fill={`url(#gradient-${activeStat.sym})`} dot={false} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <div ref={tickerScrollRef} className="overflow-x-auto -mx-1 px-1">
+                    <div style={{ minWidth: chartMinWidth }}>
+                      <ResponsiveContainer width="100%" height={320}>
+                        <AreaChart data={activeData}>
+                          <defs>
+                            <linearGradient id={`gradient-${activeStat.sym}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={activeStat.color} stopOpacity={0.3} />
+                              <stop offset="95%" stopColor={activeStat.color} stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(71, 85, 105, 0.3)" />
+                          <XAxis dataKey="time" {...AXIS_PROPS} />
+                          <YAxis domain={['dataMin - 1', 'dataMax + 1']} tickFormatter={(v) => `$${v.toFixed(2)}`} {...AXIS_PROPS} />
+                          <Tooltip
+                            {...TOOLTIP_STYLE}
+                            formatter={(value) => [`$${value.toFixed(2)}`, 'Price']}
+                            labelFormatter={(label) => `Time: ${label}`}
+                          />
+                          <Area type="monotone" dataKey="close" stroke={activeStat.color} strokeWidth={2}
+                            fill={`url(#gradient-${activeStat.sym})`} dot={false} activeDot={false} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex h-[320px] items-center justify-center text-slate-400">
                     No data available

@@ -48,6 +48,8 @@ class Trade(Base):
     side: Mapped[str] = mapped_column(String(4), nullable=False)   # "buy" | "sell"
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)

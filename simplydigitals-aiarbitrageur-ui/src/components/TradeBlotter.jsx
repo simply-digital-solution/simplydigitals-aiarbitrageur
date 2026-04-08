@@ -7,9 +7,9 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
 const fmt = (n) =>
   (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EMPTY_FILTERS = { side: '', symbol: '', qty: '', price: '', value: '', status: '', date: '' };
+const EMPTY_FILTERS = { side: '', symbol: '', qty: '', filledQty: '', avgFill: '', price: '', value: '', mktPrice: '', mktValue: '', status: '', date: '' };
 
-const COLUMNS = ['Side', 'Symbol', 'Qty', 'Price', 'Value', 'Status', 'Date', 'Time', 'Order ID'];
+const COLUMNS = ['Side', 'Symbol', 'Qty', 'Filled', 'Avg Fill', 'Price', 'Value', 'Mkt Price', 'Mkt Value', 'Status', 'Date', 'Time', 'Order ID'];
 
 function rowData(t, symbolMeta) {
   const ts = new Date(t.created_at);
@@ -19,8 +19,12 @@ function rowData(t, symbolMeta) {
     t.side,
     symbol,
     t.qty,
-    t.execution_price != null ? (t.execution_price).toFixed(2) : '',
-    ((t.execution_price || 0) * t.qty).toFixed(2),
+    t.filled_qty != null ? t.filled_qty : '',
+    t.execution_price != null ? t.execution_price.toFixed(2) : '',
+    t.execution_price != null ? (t.execution_price).toFixed(2) : t.limit_price != null ? t.limit_price.toFixed(2) : '',
+    ((t.execution_price ?? t.limit_price ?? 0) * t.qty).toFixed(2),
+    t.market_price != null ? t.market_price.toFixed(2) : '',
+    t.market_price != null ? (t.market_price * t.qty).toFixed(2) : '',
     t.status,
     ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }),
     ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }),
@@ -110,6 +114,7 @@ export default function TradeBlotter({ symbolMeta = {} }) {
   const [syncStatus, setSyncStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [actionLoading, setActionLoading] = useState({}); // tradeId → true while request in flight
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const downloadRef = useRef(null);
@@ -117,6 +122,28 @@ export default function TradeBlotter({ symbolMeta = {} }) {
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
   const clearFilters = () => setFilters(EMPTY_FILTERS);
   const hasFilters = Object.values(filters).some((v) => v !== '');
+
+  const withActionLoading = async (tradeId, fn) => {
+    setActionLoading((prev) => ({ ...prev, [tradeId]: true }));
+    try { await fn(); } finally {
+      setActionLoading((prev) => ({ ...prev, [tradeId]: false }));
+    }
+  };
+
+  const handleCancel = (trade) => withActionLoading(trade.id, async () => {
+    await axios.post(`${API_BASE_URL}/portfolio/trades/${trade.id}/cancel`);
+    await fetchTrades();
+  });
+
+  const handleQuickTrade = (trade, side) => withActionLoading(trade.id, async () => {
+    await axios.post(`${API_BASE_URL}/portfolio/trade-with-limits`, {
+      symbol: trade.symbol,
+      side,
+      qty: trade.qty,
+      limit_price: null,
+    });
+    await fetchTrades();
+  });
 
   const fetchTrades = async () => {
     setLoading(true);
@@ -163,25 +190,29 @@ export default function TradeBlotter({ symbolMeta = {} }) {
 
   // Apply filters — all are partial, case-insensitive string matches
   const filtered = trades.filter((t) => {
-    const value = (t.execution_price || 0) * t.qty;
+    const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
     const ts = new Date(t.created_at);
     const dateStr = ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
     const timeStr = ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
     const contains = (field, term) =>
       String(field).toLowerCase().includes(term.toLowerCase().trim());
     return (
-      (!filters.side   || contains(t.side, filters.side)) &&
-      (!filters.symbol || contains(t.symbol, filters.symbol)) &&
-      (!filters.qty    || contains(t.qty, filters.qty)) &&
-      (!filters.price  || contains(fmt(t.execution_price || 0), filters.price)) &&
-      (!filters.value  || contains(fmt(value), filters.value)) &&
-      (!filters.status || contains(t.status, filters.status)) &&
+      (!filters.side      || contains(t.side, filters.side)) &&
+      (!filters.symbol    || contains(t.symbol, filters.symbol)) &&
+      (!filters.qty       || contains(t.qty, filters.qty)) &&
+      (!filters.filledQty || contains(String(t.filled_qty ?? ''), filters.filledQty)) &&
+      (!filters.avgFill   || contains(fmt(t.execution_price || 0), filters.avgFill)) &&
+      (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? 0), filters.price)) &&
+      (!filters.value    || contains(fmt(value), filters.value)) &&
+      (!filters.mktPrice || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
+      (!filters.mktValue || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
+      (!filters.status   || contains(t.status, filters.status)) &&
       (!filters.date   || contains(`${dateStr} ${timeStr}`, filters.date))
     );
   });
 
   const totalValue = filtered.reduce(
-    (sum, t) => sum + (t.execution_price || 0) * t.qty * (t.side === 'buy' ? 1 : -1),
+    (sum, t) => sum + (t.execution_price ?? t.limit_price ?? 0) * t.qty * (t.side === 'buy' ? 1 : -1),
     0
   );
 
@@ -299,24 +330,34 @@ export default function TradeBlotter({ symbolMeta = {} }) {
           {/* Column headers + filter inputs */}
           <div className="border-b border-slate-700/50">
             {/* Labels */}
-            <div className="grid grid-cols-[80px_1fr_60px_80px_90px_80px_100px] gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500">
+            <div className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500">
               <span>Side</span>
               <span>Symbol</span>
               <span className="text-right">Qty</span>
+              <span className="text-right">Filled</span>
+              <span className="text-right">Avg Fill</span>
               <span className="text-right">Price</span>
               <span className="text-right">Value</span>
+              <span className="text-right">Mkt Price</span>
+              <span className="text-right">Mkt Value</span>
               <span className="text-center">Status</span>
               <span className="text-right">Date / Time</span>
+              <span className="text-center">Actions</span>
             </div>
             {/* Filter inputs */}
-            <div className="grid grid-cols-[80px_1fr_60px_80px_90px_80px_100px] gap-x-3 px-4 pb-2">
-              <FilterInput value={filters.side}   onChange={(v) => setFilter('side', v)}   placeholder="buy / sell" />
-              <FilterInput value={filters.symbol} onChange={(v) => setFilter('symbol', v)} placeholder="AAPL…" />
-              <FilterInput value={filters.qty}    onChange={(v) => setFilter('qty', v)}    placeholder="5…"    align="right" />
-              <FilterInput value={filters.price}  onChange={(v) => setFilter('price', v)}  placeholder="255…"  align="right" />
-              <FilterInput value={filters.value}  onChange={(v) => setFilter('value', v)}  placeholder="1,2…"  align="right" />
-              <FilterInput value={filters.status} onChange={(v) => setFilter('status', v)} placeholder="fill…" align="center" />
-              <FilterInput value={filters.date}   onChange={(v) => setFilter('date', v)}   placeholder="Apr…"  align="right" />
+            <div className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 px-4 pb-2">
+              <FilterInput value={filters.side}      onChange={(v) => setFilter('side', v)}      placeholder="buy / sell" />
+              <FilterInput value={filters.symbol}    onChange={(v) => setFilter('symbol', v)}    placeholder="AAPL…" />
+              <FilterInput value={filters.qty}        onChange={(v) => setFilter('qty', v)}        placeholder="5…"    align="right" />
+              <FilterInput value={filters.filledQty} onChange={(v) => setFilter('filledQty', v)} placeholder="5…"    align="right" />
+              <FilterInput value={filters.avgFill}   onChange={(v) => setFilter('avgFill', v)}   placeholder="255…"  align="right" />
+              <FilterInput value={filters.price}     onChange={(v) => setFilter('price', v)}     placeholder="255…"  align="right" />
+              <FilterInput value={filters.value}     onChange={(v) => setFilter('value', v)}     placeholder="1,2…"  align="right" />
+              <FilterInput value={filters.mktPrice}  onChange={(v) => setFilter('mktPrice', v)}  placeholder="255…"  align="right" />
+              <FilterInput value={filters.mktValue}  onChange={(v) => setFilter('mktValue', v)}  placeholder="1,2…"  align="right" />
+              <FilterInput value={filters.status}    onChange={(v) => setFilter('status', v)}    placeholder="fill…" align="center" />
+              <FilterInput value={filters.date}      onChange={(v) => setFilter('date', v)}      placeholder="Apr…"  align="right" />
+              <div /> {/* no filter for actions */}
             </div>
           </div>
 
@@ -328,12 +369,12 @@ export default function TradeBlotter({ symbolMeta = {} }) {
               </div>
             ) : (
               filtered.map((t) => {
-                const value = (t.execution_price || 0) * t.qty;
+                const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
                 const ts = new Date(t.created_at);
                 return (
                   <div
                     key={t.id}
-                    className="grid grid-cols-[80px_1fr_60px_80px_90px_80px_100px] gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors"
+                    className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors"
                   >
                     {/* Side */}
                     <div className="flex items-center gap-1.5">
@@ -362,30 +403,90 @@ export default function TradeBlotter({ symbolMeta = {} }) {
                     {/* Qty */}
                     <span className="text-right text-slate-300">{t.qty}</span>
 
-                    {/* Price */}
+                    {/* Filled Qty */}
+                    <span className="text-right text-slate-300">
+                      {t.filled_qty != null ? t.filled_qty : '—'}
+                    </span>
+
+                    {/* Avg Fill Price */}
                     <span className="text-right text-slate-300">
                       {t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}
+                    </span>
+
+                    {/* Price */}
+                    <span className="text-right text-slate-300">
+                      {t.execution_price != null
+                        ? `$${fmt(t.execution_price)}`
+                        : t.limit_price != null
+                          ? <span className="text-sky-400">${fmt(t.limit_price)} <span className="text-[9px] text-slate-500">lmt</span></span>
+                          : '—'
+                      }
                     </span>
 
                     {/* Value */}
                     <span className="text-right font-medium text-slate-200">${fmt(value)}</span>
 
+                    {/* Mkt Price */}
+                    <span className="text-right text-slate-400">
+                      {t.market_price != null ? `$${fmt(t.market_price)}` : '—'}
+                    </span>
+
+                    {/* Mkt Value */}
+                    <span className="text-right text-slate-400">
+                      {t.market_price != null ? `$${fmt(t.market_price * t.qty)}` : '—'}
+                    </span>
+
                     {/* Status */}
                     <span
-                      className={`text-center ${
-                        t.status === 'filled'   ? 'text-emerald-400' :
-                        t.status === 'accepted' ? 'text-sky-400' :
-                        t.status === 'pending'  ? 'text-yellow-400' :
-                                                  'text-slate-400'
+                      className={`text-center font-medium ${
+                        t.status === 'accepted'  ? 'text-emerald-400' :
+                        t.status === 'reached'   ? 'text-sky-400' :
+                        t.status === 'not_sent'  ? 'text-yellow-400' :
+                        t.status === 'filled'    ? 'text-emerald-400' :
+                                                   'text-slate-400'
                       }`}
                     >
-                      {t.status}
+                      {t.status === 'not_sent' ? 'not sent' : t.status}
                     </span>
 
                     {/* Date / Time */}
                     <div className="text-right text-slate-400">
                       <div>{ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' })}</div>
                       <div>{ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-center gap-1">
+                      {/* Cancel — trades not yet accepted */}
+                      {!['accepted', 'filled', 'canceled', 'rejected'].includes(t.status) && (
+                        <button
+                          onClick={() => handleCancel(t)}
+                          disabled={actionLoading[t.id]}
+                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition"
+                        >
+                          {actionLoading[t.id] ? '…' : 'Cancel'}
+                        </button>
+                      )}
+                      {/* Sell — accepted buy */}
+                      {(t.status === 'accepted' || t.status === 'filled') && t.side === 'buy' && (
+                        <button
+                          onClick={() => handleQuickTrade(t, 'sell')}
+                          disabled={actionLoading[t.id]}
+                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition"
+                        >
+                          {actionLoading[t.id] ? '…' : 'Sell'}
+                        </button>
+                      )}
+                      {/* Buy — accepted sell */}
+                      {(t.status === 'accepted' || t.status === 'filled') && t.side === 'sell' && (
+                        <button
+                          onClick={() => handleQuickTrade(t, 'buy')}
+                          disabled={actionLoading[t.id]}
+                          className="px-2 py-1 rounded text-[10px] font-semibold bg-emerald-900/30 text-emerald-400 border border-emerald-700/40 hover:bg-emerald-900/60 disabled:opacity-40 transition"
+                        >
+                          {actionLoading[t.id] ? '…' : 'Buy'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

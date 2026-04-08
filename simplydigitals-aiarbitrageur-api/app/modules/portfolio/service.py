@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import yfinance as yf
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -225,48 +227,11 @@ class PortfolioService:
                 ),
             )
 
-        # All limits passed; submit to Alpaca if available, else paper-trade locally
-        execution_price = float(current_price)
-        order_id: str | None = None
-        order_status = "filled"
-
-        if self.broker._client is not None:
-            try:
-                order_info = self.broker.submit_order(
-                    symbol=symbol,
-                    qty=req.qty,
-                    side=req.side,
-                    limit_price=req.limit_price,
-                )
-                execution_price = order_info.filled_avg_price or execution_price
-                order_id = order_info.order_id
-                order_status = order_info.status
-                logger.info(
-                    "trade_with_limits_executed",
-                    symbol=symbol,
-                    qty=req.qty,
-                    side=req.side,
-                    order_id=order_id,
-                )
-            except AlpacaBrokerServiceError as exc:
-                logger.error("alpaca_order_submit_failed", error=str(exc))
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"Failed to submit order: {exc}",
-                ) from exc
-        else:
-            logger.info(
-                "trade_paper_executed",
-                symbol=symbol,
-                qty=req.qty,
-                side=req.side,
-                reason="alpaca_unavailable",
-            )
-
-        # Update local account / position (paper trade ledger)
-        account = await self._get_or_create_account(user_id)
-        effective_price = req.limit_price if req.limit_price else execution_price
+        # Step 1 — persist trade immediately as "not_sent" before touching Alpaca
+        effective_price = req.limit_price if req.limit_price else float(current_price)
         trade_value = req.qty * effective_price
+
+        account = await self._get_or_create_account(user_id)
 
         pos_result = await self.db.execute(
             select(PortfolioPosition).where(
@@ -309,15 +274,179 @@ class PortfolioService:
         trade = Trade(
             user_id=user_id,
             symbol=symbol,
-            order_id=order_id,
             side=req.side,
             qty=req.qty,
             limit_price=req.limit_price,
-            status=order_status,
-            execution_price=execution_price,
+            market_price=float(current_price),
+            status="not_sent",
         )
         self.db.add(trade)
         await self.db.flush()
+        logger.info("trade_created_not_sent", trade_id=trade.id, symbol=symbol)
+
+        # Step 2 — send to Alpaca; update status to "reached" on ACK, "accepted" on fill
+        if self.broker._client is not None:
+            try:
+                order_info = self.broker.submit_order(
+                    symbol=symbol,
+                    qty=req.qty,
+                    side=req.side,
+                    limit_price=req.limit_price,
+                )
+                trade.order_id = order_info.order_id
+                # Alpaca acknowledged the order — mark as "reached"
+                trade.status = "reached"
+
+                # If Alpaca already filled it (market orders fill instantly)
+                if order_info.status == "filled":
+                    trade.status = "accepted"
+                    trade.filled_qty = order_info.filled_qty or req.qty
+                    trade.execution_price = order_info.filled_avg_price or effective_price
+                    trade.executed_at = datetime.now(UTC)
+
+                logger.info(
+                    "trade_sent_to_alpaca",
+                    trade_id=trade.id,
+                    order_id=trade.order_id,
+                    alpaca_status=order_info.status,
+                )
+            except AlpacaBrokerServiceError as exc:
+                # Trade stays as "not_sent" in DB — caller can retry
+                logger.error("alpaca_order_submit_failed", trade_id=trade.id, error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to submit order to Alpaca: {exc}",
+                ) from exc
+        else:
+            # No Alpaca client — paper trade fills immediately
+            trade.status = "accepted"
+            trade.filled_qty = req.qty
+            trade.execution_price = effective_price
+            trade.executed_at = datetime.now(UTC)
+            logger.info(
+                "trade_paper_accepted",
+                trade_id=trade.id,
+                symbol=symbol,
+                reason="alpaca_unavailable",
+            )
+
+        await self.db.flush()
+        return trade
+
+    async def refresh_trade_status(self, trade_id: str, user_id: str) -> Trade:
+        """Poll Alpaca for the latest order status and update the local trade record.
+
+        Status transitions:
+          not_sent → reached  (Alpaca acknowledged)
+          reached  → accepted (Alpaca filled)
+        """
+        result = await self.db.execute(
+            select(Trade).where(Trade.id == trade_id, Trade.user_id == user_id)
+        )
+        trade = result.scalar_one_or_none()
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        if not trade.order_id or self.broker._client is None:
+            return trade
+
+        try:
+            order_info = self.broker.get_order_status(trade.order_id)
+        except AlpacaBrokerServiceError as exc:
+            logger.warning("alpaca_status_poll_failed", trade_id=trade_id, error=str(exc))
+            return trade
+
+        if order_info.status == "filled" and trade.status != "accepted":
+            trade.status = "accepted"
+            trade.filled_qty = order_info.filled_qty or trade.qty
+            trade.execution_price = order_info.filled_avg_price or trade.execution_price
+            trade.executed_at = datetime.now(UTC)
+            logger.info("trade_accepted", trade_id=trade.id, order_id=trade.order_id)
+        elif order_info.status == "partially_filled":
+            trade.filled_qty = order_info.filled_qty
+            if trade.status == "not_sent":
+                trade.status = "reached"
+            logger.info(
+                "trade_partially_filled", trade_id=trade.id, filled_qty=order_info.filled_qty
+            )
+        elif order_info.status in ("accepted", "pending_new", "new"):
+            if trade.status == "not_sent":
+                trade.status = "reached"
+                logger.info("trade_reached", trade_id=trade.id, order_id=trade.order_id)
+
+        await self.db.flush()
+        return trade
+
+    async def cancel_trade(self, trade_id: str, user_id: str) -> Trade:
+        """Cancel a trade that has not yet been accepted.
+
+        - Cancels on Alpaca if an order_id exists
+        - Reverses the local cash / position changes
+        - Marks the trade status as "canceled"
+        """
+        result = await self.db.execute(
+            select(Trade).where(Trade.id == trade_id, Trade.user_id == user_id)
+        )
+        trade = result.scalar_one_or_none()
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        if trade.status in ("accepted", "canceled", "filled"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot cancel a trade with status '{trade.status}'",
+            )
+
+        # Cancel on Alpaca if order was sent
+        if trade.order_id and self.broker._client is not None:
+            try:
+                self.broker.cancel_order(trade.order_id)
+            except AlpacaBrokerServiceError as exc:
+                logger.error("alpaca_cancel_failed", trade_id=trade_id, error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to cancel order on Alpaca: {exc}",
+                ) from exc
+
+        # Reverse local cash / position
+        effective_price = trade.limit_price or trade.market_price or 0.0
+        trade_value = trade.qty * effective_price
+        account = await self._get_or_create_account(user_id)
+
+        pos_result = await self.db.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.user_id == user_id,
+                PortfolioPosition.symbol == trade.symbol,
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+
+        if trade.side == "buy":
+            # Reverse the cash debit
+            account.cash += trade_value
+            if position:
+                position.qty -= trade.qty
+                if position.qty <= 0:
+                    await self.db.delete(position)
+        else:
+            # Reverse the cash credit
+            account.cash -= trade_value
+            if position:
+                total_cost = position.avg_cost * position.qty + effective_price * trade.qty
+                position.qty += trade.qty
+                position.avg_cost = total_cost / position.qty
+            else:
+                position = PortfolioPosition(
+                    user_id=user_id,
+                    symbol=trade.symbol,
+                    qty=trade.qty,
+                    avg_cost=effective_price,
+                )
+                self.db.add(position)
+
+        trade.status = "canceled"
+        await self.db.flush()
+        logger.info("trade_canceled", trade_id=trade.id, symbol=trade.symbol)
         return trade
 
     async def _get_or_create_account(self, user_id: str) -> UserAccount:
