@@ -7,34 +7,57 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
 const fmt = (n) =>
   (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EMPTY_FILTERS = { side: '', symbol: '', qty: '', filledQty: '', avgFill: '', price: '', value: '', mktPrice: '', mktValue: '', status: '', date: '' };
+// All columns — key ties header/filter/cell together; width is the grid track size
+const ALL_COLS = [
+  { key: 'side',        label: 'Side',           width: '80px',  defaultHidden: false },
+  { key: 'symbol',      label: 'Symbol',         width: '1fr',   defaultHidden: false },
+  { key: 'qty',         label: 'Ord Qty',        width: '60px',  defaultHidden: false },
+  { key: 'filledQty',   label: 'Trd Qty',        width: '60px',  defaultHidden: false },
+  { key: 'avgFill',     label: 'Trd Fil Rate',   width: '90px',  defaultHidden: false },
+  { key: 'price',       label: 'Ord Price',      width: '90px',  defaultHidden: false },
+  { key: 'value',       label: 'Ord Tr Value',   width: '90px',  defaultHidden: false },
+  { key: 'mktPrice',    label: 'Mkt Price',      width: '90px',  defaultHidden: false },
+  { key: 'mktValue',    label: 'Mkt Value',      width: '80px',  defaultHidden: false },
+  { key: 'status',      label: 'Status',         width: '80px',  defaultHidden: false },
+  { key: 'date',        label: 'Date / Time',    width: '100px', defaultHidden: false },
+  { key: 'actions',     label: 'Actions',        width: '120px', defaultHidden: false },
+  { key: 'appTradeId',  label: 'App Trade ID',   width: '130px', defaultHidden: true  },
+  { key: 'alpacaId',    label: 'Alpaca Trade ID',width: '130px', defaultHidden: true  },
+];
 
-const COLUMNS = ['Side', 'Symbol', 'Qty', 'Filled', 'Avg Fill', 'Price', 'Value', 'Mkt Price', 'Mkt Value', 'Status', 'Date', 'Time', 'Order ID'];
+const DEFAULT_HIDDEN = new Set(ALL_COLS.filter((c) => c.defaultHidden).map((c) => c.key));
+
+const EMPTY_FILTERS = {
+  side: '', symbol: '', qty: '', filledQty: '', avgFill: '', price: '',
+  value: '', mktPrice: '', mktValue: '', status: '', date: '', appTradeId: '', alpacaId: '',
+};
+
+// CSV/PDF export always includes all columns regardless of visibility
+const EXPORT_COLUMNS = ['Side', 'Symbol', 'Ord Qty', 'Trd Qty', 'Trd Fil Rate', 'Ord Price', 'Ord Tr Value', 'Mkt Price', 'Mkt Value', 'Status', 'Date', 'Time', 'App Trade ID', 'Alpaca Trade ID'];
 
 function rowData(t, symbolMeta) {
   const ts = new Date(t.created_at);
   const exchange = symbolMeta[t.symbol]?.exchangeDisplay || '';
   const symbol = exchange ? `${t.symbol} (${exchange})` : t.symbol;
   return [
-    t.side,
-    symbol,
-    t.qty,
+    t.side, symbol, t.qty,
     t.filled_qty != null ? t.filled_qty : '',
     t.execution_price != null ? t.execution_price.toFixed(2) : '',
-    t.execution_price != null ? (t.execution_price).toFixed(2) : t.limit_price != null ? t.limit_price.toFixed(2) : '',
+    t.execution_price != null ? t.execution_price.toFixed(2) : t.limit_price != null ? t.limit_price.toFixed(2) : '',
     ((t.execution_price ?? t.limit_price ?? 0) * t.qty).toFixed(2),
     t.market_price != null ? t.market_price.toFixed(2) : '',
     t.market_price != null ? (t.market_price * t.qty).toFixed(2) : '',
     t.status,
     ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }),
     ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }),
+    t.id,
     t.order_id || 'paper',
   ];
 }
 
 function downloadCSV(rows, symbolMeta) {
   const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [COLUMNS.map(escape).join(',')];
+  const lines = [EXPORT_COLUMNS.map(escape).join(',')];
   rows.forEach((t) => lines.push(rowData(t, symbolMeta).map(escape).join(',')));
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -50,7 +73,6 @@ function downloadPDF(rows, symbolMeta) {
   const margin = 12;
   const pageW = doc.internal.pageSize.getWidth();
 
-  // Title
   doc.setFontSize(14);
   doc.setTextColor(30, 41, 59);
   doc.text('Trade Blotter', margin, margin + 4);
@@ -58,30 +80,21 @@ function downloadPDF(rows, symbolMeta) {
   doc.setTextColor(100, 116, 139);
   doc.text(`Exported ${new Date().toLocaleString('en-AU')}  ·  ${rows.length} trade${rows.length !== 1 ? 's' : ''}`, margin, margin + 10);
 
-  // Column widths (mm) — must sum to pageW - 2*margin
   const colW = [18, 38, 14, 22, 22, 22, 28, 18, 50];
   const rowH = 7;
   let y = margin + 16;
 
-  // Header row
   doc.setFillColor(15, 23, 42);
   doc.rect(margin, y, pageW - 2 * margin, rowH, 'F');
   doc.setFontSize(7);
   doc.setTextColor(148, 163, 184);
   let x = margin + 2;
-  COLUMNS.forEach((col, i) => { doc.text(col, x, y + 4.5); x += colW[i]; });
+  EXPORT_COLUMNS.forEach((col, i) => { doc.text(col, x, y + 4.5); x += colW[i]; });
   y += rowH;
 
-  // Data rows
   rows.forEach((t, idx) => {
-    if (y + rowH > doc.internal.pageSize.getHeight() - margin) {
-      doc.addPage();
-      y = margin;
-    }
-    if (idx % 2 === 0) {
-      doc.setFillColor(30, 41, 59);
-      doc.rect(margin, y, pageW - 2 * margin, rowH, 'F');
-    }
+    if (y + rowH > doc.internal.pageSize.getHeight() - margin) { doc.addPage(); y = margin; }
+    if (idx % 2 === 0) { doc.setFillColor(30, 41, 59); doc.rect(margin, y, pageW - 2 * margin, rowH, 'F'); }
     doc.setFontSize(7);
     doc.setTextColor(t.side === 'buy' ? 52 : 248, t.side === 'buy' ? 211 : 113, t.side === 'buy' ? 153 : 113);
     const cells = rowData(t, symbolMeta);
@@ -109,15 +122,31 @@ function FilterInput({ value, onChange, align = 'left', placeholder = '…' }) {
   );
 }
 
-export default function TradeBlotter({ symbolMeta = {} }) {
-  const [trades, setTrades] = useState([]);
-  const [syncStatus, setSyncStatus] = useState(null);
-  const [loading, setLoading] = useState(false);
+export default function TradeBlotter({
+  trades = [],
+  syncStatus = null,
+  loading = false,
+  symbolMeta = {},
+  onRefresh = () => {},
+}) {
   const [syncing, setSyncing] = useState(false);
-  const [actionLoading, setActionLoading] = useState({}); // tradeId → true while request in flight
+  const [actionLoading, setActionLoading] = useState({});
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [hiddenCols, setHiddenCols] = useState(DEFAULT_HIDDEN);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [colsOpen, setColsOpen] = useState(false);
   const downloadRef = useRef(null);
+  const colsRef = useRef(null);
+
+  const visibleCols = ALL_COLS.filter((c) => !hiddenCols.has(c.key));
+  const gridTemplate = visibleCols.map((c) => c.width).join('_');
+
+  const toggleCol = (key) =>
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
   const clearFilters = () => setFilters(EMPTY_FILTERS);
@@ -132,70 +161,39 @@ export default function TradeBlotter({ symbolMeta = {} }) {
 
   const handleCancel = (trade) => withActionLoading(trade.id, async () => {
     await axios.post(`${API_BASE_URL}/portfolio/trades/${trade.id}/cancel`);
-    await fetchTrades();
+    onRefresh();
   });
 
   const handleQuickTrade = (trade, side) => withActionLoading(trade.id, async () => {
     await axios.post(`${API_BASE_URL}/portfolio/trade-with-limits`, {
-      symbol: trade.symbol,
-      side,
-      qty: trade.qty,
-      limit_price: null,
+      symbol: trade.symbol, side, qty: trade.qty, limit_price: null,
     });
-    await fetchTrades();
+    onRefresh();
   });
-
-  const fetchTrades = async () => {
-    setLoading(true);
-    try {
-      const resp = await axios.get(`${API_BASE_URL}/portfolio/trades`);
-      setTrades(resp.data || []);
-    } catch {
-      // leave existing state unchanged
-    }
-    setLoading(false);
-  };
-
-  const checkSyncStatus = async () => {
-    try {
-      const resp = await axios.get(`${API_BASE_URL}/portfolio/trade-sync-status`);
-      setSyncStatus(resp.data);
-    } catch {
-      setSyncStatus(null);
-    }
-  };
 
   const syncTrades = async () => {
     setSyncing(true);
-    try {
-      await axios.post(`${API_BASE_URL}/portfolio/sync-trades`);
-      await Promise.all([fetchTrades(), checkSyncStatus()]);
-    } catch {
-      // leave existing state unchanged
-    }
+    try { await axios.post(`${API_BASE_URL}/portfolio/sync-trades`); onRefresh(); }
+    catch { /* leave unchanged */ }
     setSyncing(false);
   };
 
+  // Close dropdowns when clicking outside
   useEffect(() => {
-    fetchTrades();
-    checkSyncStatus();
-  }, []);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handler = (e) => { if (downloadRef.current && !downloadRef.current.contains(e.target)) setDownloadOpen(false); };
+    const handler = (e) => {
+      if (downloadRef.current && !downloadRef.current.contains(e.target)) setDownloadOpen(false);
+      if (colsRef.current && !colsRef.current.contains(e.target)) setColsOpen(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Apply filters — all are partial, case-insensitive string matches
   const filtered = trades.filter((t) => {
     const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
     const ts = new Date(t.created_at);
     const dateStr = ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
     const timeStr = ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
-    const contains = (field, term) =>
-      String(field).toLowerCase().includes(term.toLowerCase().trim());
+    const contains = (field, term) => String(field).toLowerCase().includes(term.toLowerCase().trim());
     return (
       (!filters.side      || contains(t.side, filters.side)) &&
       (!filters.symbol    || contains(t.symbol, filters.symbol)) &&
@@ -203,18 +201,26 @@ export default function TradeBlotter({ symbolMeta = {} }) {
       (!filters.filledQty || contains(String(t.filled_qty ?? ''), filters.filledQty)) &&
       (!filters.avgFill   || contains(fmt(t.execution_price || 0), filters.avgFill)) &&
       (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? 0), filters.price)) &&
-      (!filters.value    || contains(fmt(value), filters.value)) &&
-      (!filters.mktPrice || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
-      (!filters.mktValue || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
-      (!filters.status   || contains(t.status, filters.status)) &&
-      (!filters.date   || contains(`${dateStr} ${timeStr}`, filters.date))
+      (!filters.value     || contains(fmt(value), filters.value)) &&
+      (!filters.mktPrice  || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
+      (!filters.mktValue  || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
+      (!filters.status    || contains(t.status, filters.status)) &&
+      (!filters.date      || contains(`${dateStr} ${timeStr}`, filters.date)) &&
+      (!filters.appTradeId || contains(t.id, filters.appTradeId)) &&
+      (!filters.alpacaId   || contains(t.order_id || '', filters.alpacaId))
     );
   });
 
-  const totalValue = filtered.reduce(
-    (sum, t) => sum + (t.execution_price ?? t.limit_price ?? 0) * t.qty * (t.side === 'buy' ? 1 : -1),
-    0
-  );
+  const _executedStatuses = new Set(['accepted', 'filled']);
+  const totalValue = filtered
+    .filter((t) => _executedStatuses.has(t.status))
+    .reduce(
+      (sum, t) => sum + (t.execution_price ?? t.limit_price ?? 0) * t.qty * (t.side === 'buy' ? 1 : -1),
+      0
+    );
+
+  // Helper: render a cell only if its column is visible
+  const col = (key, node) => hiddenCols.has(key) ? null : node;
 
   return (
     <div className="space-y-4">
@@ -226,47 +232,60 @@ export default function TradeBlotter({ symbolMeta = {} }) {
         </div>
         <div className="flex items-center gap-2">
           {hasFilters && (
-            <button
-              onClick={clearFilters}
-              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition"
-            >
+            <button onClick={clearFilters}
+              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition">
               Clear Filters
             </button>
           )}
 
+          {/* Column visibility toggle */}
+          <div className="relative" ref={colsRef}>
+            <button onClick={() => setColsOpen((o) => !o)}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5">
+              Columns
+              <span className="text-slate-500 text-[10px]">▾</span>
+            </button>
+            {colsOpen && (
+              <div className="absolute right-0 mt-1 w-44 rounded-xl border border-slate-700 bg-slate-800 shadow-xl z-20 overflow-hidden py-1">
+                {ALL_COLS.map((c) => (
+                  <label key={c.key}
+                    className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer transition">
+                    <input
+                      type="checkbox"
+                      checked={!hiddenCols.has(c.key)}
+                      onChange={() => toggleCol(c.key)}
+                      className="accent-sky-500"
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Download dropdown */}
           <div className="relative" ref={downloadRef}>
-            <button
-              onClick={() => setDownloadOpen((o) => !o)}
-              disabled={filtered.length === 0}
-              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 transition disabled:opacity-40 flex items-center gap-1.5"
-            >
+            <button onClick={() => setDownloadOpen((o) => !o)} disabled={filtered.length === 0}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 transition disabled:opacity-40 flex items-center gap-1.5">
               ↓ Download
               <span className="text-slate-500 text-[10px]">▾</span>
             </button>
             {downloadOpen && (
               <div className="absolute right-0 mt-1 w-36 rounded-xl border border-slate-700 bg-slate-800 shadow-xl z-20 overflow-hidden">
-                <button
-                  onClick={() => { downloadCSV(filtered, symbolMeta); setDownloadOpen(false); }}
-                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition"
-                >
+                <button onClick={() => { downloadCSV(filtered, symbolMeta); setDownloadOpen(false); }}
+                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition">
                   CSV (.csv)
                 </button>
-                <button
-                  onClick={() => { downloadPDF(filtered, symbolMeta); setDownloadOpen(false); }}
-                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition border-t border-slate-700/60"
-                >
+                <button onClick={() => { downloadPDF(filtered, symbolMeta); setDownloadOpen(false); }}
+                  className="w-full px-4 py-2.5 text-left text-xs text-slate-300 hover:bg-slate-700 transition border-t border-slate-700/60">
                   PDF (.pdf)
                 </button>
               </div>
             )}
           </div>
 
-          <button
-            onClick={() => { fetchTrades(); checkSyncStatus(); }}
-            disabled={loading}
-            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-slate-700 transition disabled:opacity-50"
-          >
+          <button onClick={onRefresh} disabled={loading}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-slate-700 transition disabled:opacity-50">
             {loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
@@ -281,11 +300,8 @@ export default function TradeBlotter({ symbolMeta = {} }) {
               {syncStatus.missing_count} order{syncStatus.missing_count !== 1 ? 's' : ''} in Alpaca not recorded locally
             </p>
           </div>
-          <button
-            onClick={syncTrades}
-            disabled={syncing}
-            className="shrink-0 rounded-lg bg-yellow-600/30 hover:bg-yellow-600/50 border border-yellow-600/40 px-3 py-1.5 text-xs font-semibold text-yellow-300 transition disabled:opacity-50"
-          >
+          <button onClick={syncTrades} disabled={syncing}
+            className="shrink-0 rounded-lg bg-yellow-600/30 hover:bg-yellow-600/50 border border-yellow-600/40 px-3 py-1.5 text-xs font-semibold text-yellow-300 transition disabled:opacity-50">
             {syncing ? 'Syncing…' : 'Sync Now'}
           </button>
         </div>
@@ -294,7 +310,7 @@ export default function TradeBlotter({ symbolMeta = {} }) {
         <p className="text-[10px] text-emerald-500/70 text-right">✓ In sync with Alpaca</p>
       )}
 
-      {/* Stats row — always reflects full dataset */}
+      {/* Stats row */}
       {trades.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border border-slate-700/50 bg-slate-900/50 p-3 text-center">
@@ -325,39 +341,31 @@ export default function TradeBlotter({ symbolMeta = {} }) {
           {loading ? 'Loading trades…' : 'No trades yet'}
         </div>
       ) : (
-        <div className="rounded-xl border border-slate-700/50 bg-slate-900/50 overflow-hidden">
+        <div className="rounded-xl border border-slate-700/50 bg-slate-900/50 overflow-hidden overflow-x-auto">
 
           {/* Column headers + filter inputs */}
-          <div className="border-b border-slate-700/50">
-            {/* Labels */}
-            <div className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500">
-              <span>Side</span>
-              <span>Symbol</span>
-              <span className="text-right">Qty</span>
-              <span className="text-right">Filled</span>
-              <span className="text-right">Avg Fill</span>
-              <span className="text-right">Price</span>
-              <span className="text-right">Value</span>
-              <span className="text-right">Mkt Price</span>
-              <span className="text-right">Mkt Value</span>
-              <span className="text-center">Status</span>
-              <span className="text-right">Date / Time</span>
-              <span className="text-center">Actions</span>
+          <div className="border-b border-slate-700/50 min-w-max">
+            <div className={`grid grid-cols-[${gridTemplate}] gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500`}>
+              {visibleCols.map((c) => (
+                <span key={c.key} className={
+                  c.key === 'status' ? 'text-center' :
+                  c.key === 'actions' || c.key === 'appTradeId' || c.key === 'alpacaId' ? 'text-left' :
+                  ['side', 'symbol'].includes(c.key) ? '' : 'text-right'
+                }>
+                  {c.label}
+                </span>
+              ))}
             </div>
-            {/* Filter inputs */}
-            <div className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 px-4 pb-2">
-              <FilterInput value={filters.side}      onChange={(v) => setFilter('side', v)}      placeholder="buy / sell" />
-              <FilterInput value={filters.symbol}    onChange={(v) => setFilter('symbol', v)}    placeholder="AAPL…" />
-              <FilterInput value={filters.qty}        onChange={(v) => setFilter('qty', v)}        placeholder="5…"    align="right" />
-              <FilterInput value={filters.filledQty} onChange={(v) => setFilter('filledQty', v)} placeholder="5…"    align="right" />
-              <FilterInput value={filters.avgFill}   onChange={(v) => setFilter('avgFill', v)}   placeholder="255…"  align="right" />
-              <FilterInput value={filters.price}     onChange={(v) => setFilter('price', v)}     placeholder="255…"  align="right" />
-              <FilterInput value={filters.value}     onChange={(v) => setFilter('value', v)}     placeholder="1,2…"  align="right" />
-              <FilterInput value={filters.mktPrice}  onChange={(v) => setFilter('mktPrice', v)}  placeholder="255…"  align="right" />
-              <FilterInput value={filters.mktValue}  onChange={(v) => setFilter('mktValue', v)}  placeholder="1,2…"  align="right" />
-              <FilterInput value={filters.status}    onChange={(v) => setFilter('status', v)}    placeholder="fill…" align="center" />
-              <FilterInput value={filters.date}      onChange={(v) => setFilter('date', v)}      placeholder="Apr…"  align="right" />
-              <div /> {/* no filter for actions */}
+            <div className={`grid grid-cols-[${gridTemplate}] gap-x-3 px-4 pb-2`}>
+              {visibleCols.map((c) => {
+                const alignMap = { side: 'left', symbol: 'left', status: 'center', actions: 'left', appTradeId: 'left', alpacaId: 'left' };
+                const align = alignMap[c.key] || 'right';
+                if (c.key === 'actions') return <div key={c.key} />;
+                return (
+                  <FilterInput key={c.key} value={filters[c.key] ?? ''} onChange={(v) => setFilter(c.key, v)}
+                    align={align} placeholder="…" />
+                );
+              })}
             </div>
           </div>
 
@@ -372,122 +380,106 @@ export default function TradeBlotter({ symbolMeta = {} }) {
                 const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
                 const ts = new Date(t.created_at);
                 return (
-                  <div
-                    key={t.id}
-                    className="grid grid-cols-[80px_1fr_60px_60px_80px_90px_80px_90px_80px_80px_100px_120px] gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors"
-                  >
-                    {/* Side */}
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`font-bold uppercase px-1.5 py-0.5 rounded text-[10px] ${
-                          t.side === 'buy'
-                            ? 'bg-emerald-900/40 text-emerald-400'
-                            : 'bg-rose-900/40 text-rose-400'
-                        }`}
-                      >
-                        {t.side}
+                  <div key={t.id}
+                    className={`grid grid-cols-[${gridTemplate}] gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors min-w-max`}>
+
+                    {col('side', (
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold uppercase px-1.5 py-0.5 rounded text-[10px] ${
+                          t.side === 'buy' ? 'bg-emerald-900/40 text-emerald-400' : 'bg-rose-900/40 text-rose-400'
+                        }`}>{t.side}</span>
+                        {!t.order_id && <span className="text-[9px] px-1 py-0.5 rounded bg-slate-700/60 text-slate-400">paper</span>}
+                      </div>
+                    ))}
+
+                    {col('symbol', (
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-semibold truncate">{t.symbol}</span>
+                        {symbolMeta[t.symbol]?.exchangeDisplay && (
+                          <span className="text-[9px] text-sky-400 shrink-0">{symbolMeta[t.symbol].exchangeDisplay}</span>
+                        )}
+                      </div>
+                    ))}
+
+                    {col('qty',       <span className="text-right text-slate-300">{t.qty}</span>)}
+                    {col('filledQty', <span className="text-right text-slate-300">{t.filled_qty != null ? t.filled_qty : '—'}</span>)}
+                    {col('avgFill',   <span className="text-right text-slate-300">{t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}</span>)}
+
+                    {col('price', (
+                      <span className="text-right text-slate-300">
+                        {t.execution_price != null
+                          ? `$${fmt(t.execution_price)}`
+                          : t.limit_price != null
+                            ? <span className="text-sky-400">${fmt(t.limit_price)} <span className="text-[9px] text-slate-500">lmt</span></span>
+                            : '—'}
                       </span>
-                      {!t.order_id && (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-slate-700/60 text-slate-400">paper</span>
-                      )}
-                    </div>
+                    ))}
 
-                    {/* Symbol */}
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-semibold truncate">{t.symbol}</span>
-                      {symbolMeta[t.symbol]?.exchangeDisplay && (
-                        <span className="text-[9px] text-sky-400 shrink-0">{symbolMeta[t.symbol].exchangeDisplay}</span>
-                      )}
-                    </div>
+                    {col('value',    <span className="text-right font-medium text-slate-200">${fmt(value)}</span>)}
+                    {col('mktPrice', <span className="text-right text-slate-400">{t.market_price != null ? `$${fmt(t.market_price)}` : '—'}</span>)}
+                    {col('mktValue', <span className="text-right text-slate-400">{t.market_price != null ? `$${fmt(t.market_price * t.qty)}` : '—'}</span>)}
 
-                    {/* Qty */}
-                    <span className="text-right text-slate-300">{t.qty}</span>
-
-                    {/* Filled Qty */}
-                    <span className="text-right text-slate-300">
-                      {t.filled_qty != null ? t.filled_qty : '—'}
-                    </span>
-
-                    {/* Avg Fill Price */}
-                    <span className="text-right text-slate-300">
-                      {t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}
-                    </span>
-
-                    {/* Price */}
-                    <span className="text-right text-slate-300">
-                      {t.execution_price != null
-                        ? `$${fmt(t.execution_price)}`
-                        : t.limit_price != null
-                          ? <span className="text-sky-400">${fmt(t.limit_price)} <span className="text-[9px] text-slate-500">lmt</span></span>
-                          : '—'
-                      }
-                    </span>
-
-                    {/* Value */}
-                    <span className="text-right font-medium text-slate-200">${fmt(value)}</span>
-
-                    {/* Mkt Price */}
-                    <span className="text-right text-slate-400">
-                      {t.market_price != null ? `$${fmt(t.market_price)}` : '—'}
-                    </span>
-
-                    {/* Mkt Value */}
-                    <span className="text-right text-slate-400">
-                      {t.market_price != null ? `$${fmt(t.market_price * t.qty)}` : '—'}
-                    </span>
-
-                    {/* Status */}
-                    <span
-                      className={`text-center font-medium ${
+                    {col('status', (
+                      <span className={`text-center font-medium ${
                         t.status === 'accepted'  ? 'text-emerald-400' :
+                        t.status === 'filled'    ? 'text-emerald-400' :
                         t.status === 'reached'   ? 'text-sky-400' :
                         t.status === 'not_sent'  ? 'text-yellow-400' :
-                        t.status === 'filled'    ? 'text-emerald-400' :
+                        t.status === 'withdrawn' ? 'text-slate-500' :
+                        t.status === 'canceled'  ? 'text-rose-400' :
+                        t.status === 'expired'   ? 'text-orange-400' :
+                        t.status === 'rejected'  ? 'text-rose-400' :
                                                    'text-slate-400'
-                      }`}
-                    >
-                      {t.status === 'not_sent' ? 'not sent' : t.status}
-                    </span>
+                      }`}>
+                        {t.status === 'not_sent' ? 'not sent' : t.status}
+                      </span>
+                    ))}
 
-                    {/* Date / Time */}
-                    <div className="text-right text-slate-400">
-                      <div>{ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' })}</div>
-                      <div>{ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</div>
-                    </div>
+                    {col('date', (
+                      <div className="text-right text-slate-400">
+                        <div>{ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' })}</div>
+                        <div>{ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</div>
+                      </div>
+                    ))}
 
-                    {/* Actions */}
-                    <div className="flex items-center justify-center gap-1">
-                      {/* Cancel — trades not yet accepted */}
-                      {!['accepted', 'filled', 'canceled', 'rejected'].includes(t.status) && (
-                        <button
-                          onClick={() => handleCancel(t)}
-                          disabled={actionLoading[t.id]}
-                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition"
-                        >
-                          {actionLoading[t.id] ? '…' : 'Cancel'}
-                        </button>
-                      )}
-                      {/* Sell — accepted buy */}
-                      {(t.status === 'accepted' || t.status === 'filled') && t.side === 'buy' && (
-                        <button
-                          onClick={() => handleQuickTrade(t, 'sell')}
-                          disabled={actionLoading[t.id]}
-                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition"
-                        >
-                          {actionLoading[t.id] ? '…' : 'Sell'}
-                        </button>
-                      )}
-                      {/* Buy — accepted sell */}
-                      {(t.status === 'accepted' || t.status === 'filled') && t.side === 'sell' && (
-                        <button
-                          onClick={() => handleQuickTrade(t, 'buy')}
-                          disabled={actionLoading[t.id]}
-                          className="px-2 py-1 rounded text-[10px] font-semibold bg-emerald-900/30 text-emerald-400 border border-emerald-700/40 hover:bg-emerald-900/60 disabled:opacity-40 transition"
-                        >
-                          {actionLoading[t.id] ? '…' : 'Buy'}
-                        </button>
-                      )}
-                    </div>
+                    {col('actions', (
+                      <div className="flex items-center justify-center gap-1">
+                        {!['accepted', 'filled', 'canceled', 'withdrawn', 'expired', 'rejected'].includes(t.status) && (
+                          <button onClick={() => handleCancel(t)} disabled={actionLoading[t.id]}
+                            className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition">
+                            {actionLoading[t.id] ? '…' : 'Cancel'}
+                          </button>
+                        )}
+                        {(t.status === 'accepted' || t.status === 'filled') && !t.order_id && (
+                          <button onClick={() => handleCancel(t)} disabled={actionLoading[t.id]}
+                            className="px-2 py-1 rounded text-[10px] font-semibold bg-slate-700/50 text-slate-400 border border-slate-600/40 hover:bg-slate-700 disabled:opacity-40 transition">
+                            {actionLoading[t.id] ? '…' : 'Withdraw'}
+                          </button>
+                        )}
+                        {(t.status === 'accepted' || t.status === 'filled') && t.side === 'buy' && t.order_id && (
+                          <button onClick={() => handleQuickTrade(t, 'sell')} disabled={actionLoading[t.id]}
+                            className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/30 text-rose-400 border border-rose-700/40 hover:bg-rose-900/60 disabled:opacity-40 transition">
+                            {actionLoading[t.id] ? '…' : 'Sell'}
+                          </button>
+                        )}
+                        {(t.status === 'accepted' || t.status === 'filled') && t.side === 'sell' && t.order_id && (
+                          <button onClick={() => handleQuickTrade(t, 'buy')} disabled={actionLoading[t.id]}
+                            className="px-2 py-1 rounded text-[10px] font-semibold bg-emerald-900/30 text-emerald-400 border border-emerald-700/40 hover:bg-emerald-900/60 disabled:opacity-40 transition">
+                            {actionLoading[t.id] ? '…' : 'Buy'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+
+                    {col('appTradeId', (
+                      <span className="text-left text-[10px] text-slate-500 font-mono truncate" title={t.id}>{t.id}</span>
+                    ))}
+                    {col('alpacaId', (
+                      <span className="text-left text-[10px] text-slate-500 font-mono truncate" title={t.order_id || ''}>
+                        {t.order_id || <span className="text-slate-600">paper</span>}
+                      </span>
+                    ))}
+
                   </div>
                 );
               })

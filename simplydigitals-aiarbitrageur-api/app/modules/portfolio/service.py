@@ -356,6 +356,8 @@ class PortfolioService:
             logger.warning("alpaca_status_poll_failed", trade_id=trade_id, error=str(exc))
             return trade
 
+        _terminal_statuses = {"expired", "canceled", "done_for_day", "rejected", "replaced"}
+
         if order_info.status == "filled" and trade.status != "accepted":
             trade.status = "accepted"
             trade.filled_qty = order_info.filled_qty or trade.qty
@@ -373,9 +375,96 @@ class PortfolioService:
             if trade.status == "not_sent":
                 trade.status = "reached"
                 logger.info("trade_reached", trade_id=trade.id, order_id=trade.order_id)
+        elif order_info.status in _terminal_statuses:
+            await self._reverse_trade_position(trade, user_id)
+            trade.status = order_info.status
+            logger.info(
+                "trade_terminal",
+                trade_id=trade.id,
+                order_id=trade.order_id,
+                alpaca_status=order_info.status,
+            )
 
         await self.db.flush()
         return trade
+
+    async def _reverse_trade_position(self, trade: Trade, user_id: str) -> None:
+        """Reverse the cash and position impact of a trade that did not fill.
+
+        Safe to call only for trades that were booked (cash/position already adjusted)
+        but never filled — e.g. expired, canceled, rejected orders.
+        """
+        # Use the best available price — execution fills first, then limit, then market
+        effective_price = trade.execution_price or trade.limit_price or trade.market_price or 0.0
+        trade_value = trade.qty * effective_price
+        account = await self._get_or_create_account(user_id)
+
+        pos_result = await self.db.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.user_id == user_id,
+                PortfolioPosition.symbol == trade.symbol,
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+
+        if trade.side == "buy":
+            account.cash += trade_value
+            if position:
+                position.qty -= trade.qty
+                if position.qty <= 0:
+                    await self.db.delete(position)
+        else:
+            account.cash -= trade_value
+            if position:
+                total_cost = position.avg_cost * position.qty + effective_price * trade.qty
+                position.qty += trade.qty
+                position.avg_cost = total_cost / position.qty
+            else:
+                position = PortfolioPosition(
+                    user_id=user_id,
+                    symbol=trade.symbol,
+                    qty=trade.qty,
+                    avg_cost=effective_price,
+                )
+                self.db.add(position)
+
+        logger.info(
+            "trade_position_reversed",
+            trade_id=trade.id,
+            symbol=trade.symbol,
+            side=trade.side,
+            qty=trade.qty,
+            cash_delta=trade_value if trade.side == "buy" else -trade_value,
+        )
+
+    async def refresh_open_trades(self, user_id: str) -> int:
+        """Poll Alpaca for all trades in not_sent/reached state and update statuses.
+
+        Returns the number of trades updated.
+        """
+        if self.broker._client is None:
+            return 0
+
+        # Include legacy Alpaca statuses (pending_new, new, accepted) that may have
+        # been written directly before the not_sent/reached lifecycle was introduced
+        _open_statuses = ["not_sent", "reached", "pending_new", "new", "accepted_for_bidding"]
+        result = await self.db.execute(
+            select(Trade).where(
+                Trade.user_id == user_id,
+                Trade.status.in_(_open_statuses),
+                Trade.order_id.isnot(None),
+            )
+        )
+        open_trades = list(result.scalars().all())
+        updated = 0
+        for trade in open_trades:
+            before = trade.status
+            await self.refresh_trade_status(trade.id, user_id)
+            if trade.status != before:
+                updated += 1
+
+        logger.info("open_trades_refreshed", checked=len(open_trades), updated=updated)
+        return updated
 
     async def cancel_trade(self, trade_id: str, user_id: str) -> Trade:
         """Cancel a trade that has not yet been accepted.
@@ -391,13 +480,20 @@ class PortfolioService:
         if not trade:
             raise HTTPException(status_code=404, detail="Trade not found")
 
-        if trade.status in ("accepted", "canceled", "filled"):
+        _terminal = {"canceled", "withdrawn", "expired", "rejected"}
+        if trade.status in _terminal:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot cancel a trade with status '{trade.status}'",
             )
+        # Real accepted/filled trades on Alpaca cannot be withdrawn — only paper ones can
+        if trade.status in ("accepted", "filled") and trade.order_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot withdraw a trade that was executed on Alpaca",
+            )
 
-        # Cancel on Alpaca if order was sent
+        # Cancel on Alpaca only if the order actually reached Alpaca
         if trade.order_id and self.broker._client is not None:
             try:
                 self.broker.cancel_order(trade.order_id)
@@ -408,45 +504,12 @@ class PortfolioService:
                     detail=f"Failed to cancel order on Alpaca: {exc}",
                 ) from exc
 
-        # Reverse local cash / position
-        effective_price = trade.limit_price or trade.market_price or 0.0
-        trade_value = trade.qty * effective_price
-        account = await self._get_or_create_account(user_id)
+        await self._reverse_trade_position(trade, user_id)
 
-        pos_result = await self.db.execute(
-            select(PortfolioPosition).where(
-                PortfolioPosition.user_id == user_id,
-                PortfolioPosition.symbol == trade.symbol,
-            )
-        )
-        position = pos_result.scalar_one_or_none()
-
-        if trade.side == "buy":
-            # Reverse the cash debit
-            account.cash += trade_value
-            if position:
-                position.qty -= trade.qty
-                if position.qty <= 0:
-                    await self.db.delete(position)
-        else:
-            # Reverse the cash credit
-            account.cash -= trade_value
-            if position:
-                total_cost = position.avg_cost * position.qty + effective_price * trade.qty
-                position.qty += trade.qty
-                position.avg_cost = total_cost / position.qty
-            else:
-                position = PortfolioPosition(
-                    user_id=user_id,
-                    symbol=trade.symbol,
-                    qty=trade.qty,
-                    avg_cost=effective_price,
-                )
-                self.db.add(position)
-
-        trade.status = "canceled"
+        # "withdrawn" = never reached Alpaca; "canceled" = was on Alpaca and canceled
+        trade.status = "withdrawn" if not trade.order_id else "canceled"
         await self.db.flush()
-        logger.info("trade_canceled", trade_id=trade.id, symbol=trade.symbol)
+        logger.info("trade_canceled", trade_id=trade.id, symbol=trade.symbol, status=trade.status)
         return trade
 
     async def _get_or_create_account(self, user_id: str) -> UserAccount:
@@ -471,10 +534,13 @@ class PortfolioService:
             ((_live_price(p.symbol) or p.avg_cost) * p.qty)
             for p in positions if p.qty > 0
         )
+        portfolio_value = account.cash + positions_value
+        realized_pnl = portfolio_value - 100_000.0
         return {
             "cash": account.cash,
             "buying_power": account.cash,
-            "portfolio_value": account.cash + positions_value,
+            "portfolio_value": portfolio_value,
+            "realized_pnl": realized_pnl,
         }
 
     async def get_trades(self, user_id: str, limit: int = 50) -> list[Trade]:

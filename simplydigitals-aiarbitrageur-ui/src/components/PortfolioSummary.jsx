@@ -1,7 +1,4 @@
-import { useState, useEffect } from 'react';
-import axios from 'axios';
-
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+import { useState } from 'react';
 
 const fmt = (n) =>
   (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -9,34 +6,15 @@ const fmt = (n) =>
 const sign = (n) => (n >= 0 ? '+' : '');
 const plClass = (n) => (n >= 0 ? 'text-emerald-400' : 'text-rose-400');
 
-
-export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} }) {
-  const [positions, setPositions] = useState([]);
-  const [account, setAccount] = useState({ cash: null, buying_power: null });
-  const [loading, setLoading] = useState(false);
+export default function PortfolioSummary({
+  positions = [],
+  account = { cash: null, buying_power: null },
+  latestPrices = {},
+  symbolMeta = {},
+  loading = false,
+  onRefresh = () => {},
+}) {
   const [activeTab, setActiveTab] = useState('summary');
-
-
-  const fetchPortfolio = async () => {
-    setLoading(true);
-    try {
-      const [posResp, accResp] = await Promise.all([
-        axios.get(`${API_BASE_URL}/portfolio`),
-        axios.get(`${API_BASE_URL}/portfolio/account`),
-      ]);
-      setPositions(posResp.data || []);
-      setAccount(accResp.data || {});
-    } catch {
-      // API unavailable — leave existing state unchanged
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchPortfolio();
-    const interval = setInterval(fetchPortfolio, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Enrich positions with live prices from ChartGrid when available
   const enriched = positions.map((pos) => {
@@ -52,10 +30,12 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
     return { ...pos, current_price: currentPrice, current_value: currentValue, pnl: totalPnl, pnl_pct: totalPnlPct, day_pnl: dayPnl, yesterday_value: yesterdayValue };
   });
 
-  // Fallback for positions without live prices: use backend pnl
-  const totalPnl = enriched.reduce((sum, p) => sum + (p.pnl || 0), 0);
+  const unrealizedPnl = enriched.reduce((sum, p) => sum + (p.pnl || 0), 0);
+  const realizedPnl = account.realized_pnl ?? 0;
+  const totalPnl = unrealizedPnl + realizedPnl;
   const dayPnl = enriched.reduce((sum, p) => sum + (p.day_pnl ?? (p.pnl || 0)), 0);
-  const totalValue = enriched.reduce((sum, p) => sum + (p.current_value || 0), 0);
+  const positionsValue = enriched.reduce((sum, p) => sum + (p.current_value || 0), 0);
+  const totalValue = positionsValue + (account.cash || 0);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -191,7 +171,7 @@ export default function PortfolioSummary({ latestPrices = {}, symbolMeta = {} })
 
       {/* Refresh */}
       <button
-        onClick={fetchPortfolio}
+        onClick={onRefresh}
         disabled={loading}
         className="w-full rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2 text-xs font-medium text-sky-400 hover:bg-slate-900 transition disabled:opacity-50"
       >

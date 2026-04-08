@@ -102,16 +102,31 @@ async def _job_evaluate_triggers() -> None:
         logger.info("job_evaluate_triggers_done")
 
 
+async def _job_refresh_open_trades() -> None:
+    from app.modules.auth.dependencies import DEFAULT_TRADER_ID
+    from app.modules.portfolio.service import PortfolioService
+    async with AsyncSessionLocal() as db:
+        try:
+            svc = PortfolioService(db)
+            updated = await svc.refresh_open_trades(DEFAULT_TRADER_ID)
+            await db.commit()
+            logger.info("job_refresh_open_trades_done", updated=updated)
+        except Exception as exc:
+            logger.error("job_refresh_open_trades_failed", error=str(exc))
+            await db.rollback()
+
+
 # ── EventBridge-compatible dispatcher ────────────────────────────────────────
 
 ACTIONS: dict[str, Any] = {
-    "fetch_intraday":      _job_fetch_intraday,
-    "fetch_closing":       _job_fetch_closing,
-    "purge_intraday":      _job_purge_intraday,
-    "fetch_intraday_1min": _job_fetch_intraday_1min,
-    "purge_intraday_1min": _job_purge_intraday_1min,
-    "sync_positions":      _job_sync_positions,
-    "evaluate_triggers":   _job_evaluate_triggers,
+    "fetch_intraday":        _job_fetch_intraday,
+    "fetch_closing":         _job_fetch_closing,
+    "purge_intraday":        _job_purge_intraday,
+    "fetch_intraday_1min":   _job_fetch_intraday_1min,
+    "purge_intraday_1min":   _job_purge_intraday_1min,
+    "sync_positions":        _job_sync_positions,
+    "evaluate_triggers":     _job_evaluate_triggers,
+    "refresh_open_trades":   _job_refresh_open_trades,
 }
 
 
@@ -168,6 +183,10 @@ def start_scheduler() -> None:
         # Every 1 minute (trigger evaluation for price alerts)
         scheduler.add_job(_run, "cron", args=[_job_evaluate_triggers],
                           minute="*", id="evaluate_triggers")
+
+        # Every 30 seconds (poll Alpaca for open trade status updates — expired, filled, etc.)
+        scheduler.add_job(_run, "interval", args=[_job_refresh_open_trades],
+                          seconds=30, id="refresh_open_trades")
 
         scheduler.start()
         logger.info("scheduler_started", jobs=len(scheduler.get_jobs()))
