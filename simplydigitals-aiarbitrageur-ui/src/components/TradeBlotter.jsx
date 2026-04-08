@@ -110,10 +110,12 @@ function downloadPDF(rows, symbolMeta) {
   doc.save(`trade_blotter_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-function FilterInput({ value, onChange, align = 'left', placeholder = '…' }) {
+function FilterInput({ name, value, onChange, align = 'left', placeholder = '…' }) {
   return (
     <input
       type="text"
+      name={name}
+      autoComplete="off"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -139,7 +141,7 @@ export default function TradeBlotter({
   const colsRef = useRef(null);
 
   const visibleCols = ALL_COLS.filter((c) => !hiddenCols.has(c.key));
-  const gridTemplate = visibleCols.map((c) => c.width).join('_');
+  const gridStyle = { gridTemplateColumns: visibleCols.map((c) => c.width).join(' ') };
 
   const toggleCol = (key) =>
     setHiddenCols((prev) => {
@@ -188,28 +190,33 @@ export default function TradeBlotter({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filtered = trades.filter((t) => {
-    const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
-    const ts = new Date(t.created_at);
-    const dateStr = ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
-    const timeStr = ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
-    const contains = (field, term) => String(field).toLowerCase().includes(term.toLowerCase().trim());
-    return (
-      (!filters.side      || contains(t.side, filters.side)) &&
-      (!filters.symbol    || contains(t.symbol, filters.symbol)) &&
-      (!filters.qty       || contains(t.qty, filters.qty)) &&
-      (!filters.filledQty || contains(String(t.filled_qty ?? ''), filters.filledQty)) &&
-      (!filters.avgFill   || contains(fmt(t.execution_price || 0), filters.avgFill)) &&
-      (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? 0), filters.price)) &&
-      (!filters.value     || contains(fmt(value), filters.value)) &&
-      (!filters.mktPrice  || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
-      (!filters.mktValue  || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
-      (!filters.status    || contains(t.status, filters.status)) &&
-      (!filters.date      || contains(`${dateStr} ${timeStr}`, filters.date)) &&
-      (!filters.appTradeId || contains(t.id, filters.appTradeId)) &&
-      (!filters.alpacaId   || contains(t.order_id || '', filters.alpacaId))
-    );
-  });
+  const HIDDEN_STATUSES = new Set(['expired', 'withdrawn']);
+
+  const filtered = trades
+    .filter((t) => !HIDDEN_STATUSES.has(t.status))
+    .filter((t) => {
+      const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
+      const ts = new Date(t.created_at);
+      const dateStr = ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
+      const timeStr = ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+      const contains = (field, term) => String(field).toLowerCase().includes(term.toLowerCase().trim());
+      return (
+        (!filters.side      || contains(t.side, filters.side)) &&
+        (!filters.symbol    || contains(t.symbol, filters.symbol)) &&
+        (!filters.qty       || contains(t.qty, filters.qty)) &&
+        (!filters.filledQty || contains(String(t.filled_qty ?? ''), filters.filledQty)) &&
+        (!filters.avgFill   || contains(fmt(t.execution_price || 0), filters.avgFill)) &&
+        (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? 0), filters.price)) &&
+        (!filters.value     || contains(fmt(value), filters.value)) &&
+        (!filters.mktPrice  || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
+        (!filters.mktValue  || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
+        (!filters.status    || contains(t.status, filters.status)) &&
+        (!filters.date      || contains(`${dateStr} ${timeStr}`, filters.date)) &&
+        (!filters.appTradeId || contains(t.id, filters.appTradeId)) &&
+        (!filters.alpacaId   || contains(t.order_id || '', filters.alpacaId))
+      );
+    })
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const _executedStatuses = new Set(['accepted', 'filled']);
   const totalValue = filtered
@@ -345,7 +352,7 @@ export default function TradeBlotter({
 
           {/* Column headers + filter inputs */}
           <div className="border-b border-slate-700/50 min-w-max">
-            <div className={`grid grid-cols-[${gridTemplate}] gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500`}>
+            <div className="grid gap-x-3 px-4 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500" style={gridStyle}>
               {visibleCols.map((c) => (
                 <span key={c.key} className={
                   c.key === 'status' ? 'text-center' :
@@ -356,13 +363,13 @@ export default function TradeBlotter({
                 </span>
               ))}
             </div>
-            <div className={`grid grid-cols-[${gridTemplate}] gap-x-3 px-4 pb-2`}>
+            <div className="grid gap-x-3 px-4 pb-2" style={gridStyle}>
               {visibleCols.map((c) => {
                 const alignMap = { side: 'left', symbol: 'left', status: 'center', actions: 'left', appTradeId: 'left', alpacaId: 'left' };
                 const align = alignMap[c.key] || 'right';
                 if (c.key === 'actions') return <div key={c.key} />;
                 return (
-                  <FilterInput key={c.key} value={filters[c.key] ?? ''} onChange={(v) => setFilter(c.key, v)}
+                  <FilterInput key={c.key} name={`filter_${c.key}`} value={filters[c.key] ?? ''} onChange={(v) => setFilter(c.key, v)}
                     align={align} placeholder="…" />
                 );
               })}
@@ -381,7 +388,7 @@ export default function TradeBlotter({
                 const ts = new Date(t.created_at);
                 return (
                   <div key={t.id}
-                    className={`grid grid-cols-[${gridTemplate}] gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors min-w-max`}>
+                    className="grid gap-x-3 items-center px-4 py-2.5 text-xs hover:bg-slate-800/40 transition-colors min-w-max" style={gridStyle}>
 
                     {col('side', (
                       <div className="flex items-center gap-1.5">
