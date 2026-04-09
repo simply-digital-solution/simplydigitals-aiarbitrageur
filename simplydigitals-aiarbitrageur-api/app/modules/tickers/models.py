@@ -25,7 +25,10 @@ class Ticker(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    long_name: Mapped[str | None] = mapped_column(String(255))
     exchange: Mapped[str | None] = mapped_column(String(50))
+    exchange_display: Mapped[str | None] = mapped_column(String(50))
+    type_display: Mapped[str | None] = mapped_column(String(50))
     currency: Mapped[str] = mapped_column(String(10), default="USD")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

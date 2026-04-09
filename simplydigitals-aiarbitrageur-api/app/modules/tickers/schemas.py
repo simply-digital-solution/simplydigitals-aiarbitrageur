@@ -15,7 +15,10 @@ class TickerRead(_Base):
     id: str
     symbol: str
     name: str
+    long_name: str | None = None
     exchange: str | None = None
+    exchange_display: str | None = None
+    type_display: str | None = None
     currency: str = "USD"
 
 
@@ -31,5 +34,8 @@ class WatchlistItemRead(_Base):
     id: str
     symbol: str
     name: str
+    long_name: str | None = None
     exchange: str | None = None
+    exchange_display: str | None = None
+    type_display: str | None = None
     added_at: datetime

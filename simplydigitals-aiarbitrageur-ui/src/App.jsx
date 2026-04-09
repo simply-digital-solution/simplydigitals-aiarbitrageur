@@ -23,6 +23,7 @@ export default function App() {
   const [symbolMeta, setSymbolMeta] = useState({});
   const [activeNav, setActiveNav] = useState('home');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [tradePrefill, setTradePrefill] = useState(null);
 
   // Shared portfolio data — fetched once here, passed to both PortfolioSummary and TradeBlotter
   const [positions, setPositions] = useState([]);
@@ -178,7 +179,12 @@ export default function App() {
         {/* Trading */}
         {activeNav === 'trading' && (
           <section className="rounded-3xl border border-slate-700 bg-slate-900/70 p-4 shadow-xl shadow-slate-950/20 sm:p-6">
-            <TradePanel selectedSymbols={selectedSymbols} onTradeCompleted={refreshPortfolio} />
+            <TradePanel
+              selectedSymbols={selectedSymbols}
+              onTradeCompleted={refreshPortfolio}
+              prefill={tradePrefill}
+              onPrefillConsumed={() => setTradePrefill(null)}
+            />
           </section>
         )}
 
@@ -191,6 +197,7 @@ export default function App() {
               loading={portfolioLoading}
               symbolMeta={symbolMeta}
               onRefresh={refreshPortfolio}
+              onOpenTradePanel={(prefill) => { setTradePrefill(prefill); setActiveNav('trading'); }}
             />
           </section>
         )}

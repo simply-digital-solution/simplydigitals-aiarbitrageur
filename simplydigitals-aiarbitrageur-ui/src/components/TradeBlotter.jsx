@@ -12,13 +12,11 @@ const ALL_COLS = [
   { key: 'side',        label: 'Side',           width: '80px',  defaultHidden: false },
   { key: 'symbol',      label: 'Symbol',         width: '1fr',   defaultHidden: false },
   { key: 'qty',         label: 'Ord Qty',        width: '60px',  defaultHidden: false },
+  { key: 'price',       label: 'Ord Price',      width: '90px',  defaultHidden: false },
+  { key: 'value',       label: 'Ord Value',      width: '90px',  defaultHidden: false },
   { key: 'filledQty',   label: 'Trd Qty',        width: '60px',  defaultHidden: false },
   { key: 'avgFill',     label: 'Trd Fil Rate',   width: '90px',  defaultHidden: false },
-  { key: 'price',       label: 'Ord Price',      width: '90px',  defaultHidden: false },
-  { key: 'value',       label: 'Ord Tr Value',   width: '90px',  defaultHidden: false },
-  { key: 'mktPrice',    label: 'Mkt Price',      width: '90px',  defaultHidden: false },
-  { key: 'mktValue',    label: 'Mkt Value',      width: '80px',  defaultHidden: false },
-  { key: 'status',      label: 'Status',         width: '80px',  defaultHidden: false },
+{ key: 'status',      label: 'Status',         width: '80px',  defaultHidden: false },
   { key: 'date',        label: 'Date / Time',    width: '100px', defaultHidden: false },
   { key: 'actions',     label: 'Actions',        width: '120px', defaultHidden: false },
   { key: 'appTradeId',  label: 'App Trade ID',   width: '130px', defaultHidden: true  },
@@ -29,24 +27,23 @@ const DEFAULT_HIDDEN = new Set(ALL_COLS.filter((c) => c.defaultHidden).map((c) =
 
 const EMPTY_FILTERS = {
   side: '', symbol: '', qty: '', filledQty: '', avgFill: '', price: '',
-  value: '', mktPrice: '', mktValue: '', status: '', date: '', appTradeId: '', alpacaId: '',
+  value: '', status: '', date: '', appTradeId: '', alpacaId: '',
 };
 
 // CSV/PDF export always includes all columns regardless of visibility
-const EXPORT_COLUMNS = ['Side', 'Symbol', 'Ord Qty', 'Trd Qty', 'Trd Fil Rate', 'Ord Price', 'Ord Tr Value', 'Mkt Price', 'Mkt Value', 'Status', 'Date', 'Time', 'App Trade ID', 'Alpaca Trade ID'];
+const EXPORT_COLUMNS = ['Side', 'Symbol', 'Ord Qty', 'Ord Price', 'Ord Value', 'Trd Qty', 'Trd Fil Rate', 'Status', 'Date', 'Time', 'App Trade ID', 'Alpaca Trade ID'];
 
 function rowData(t, symbolMeta) {
   const ts = new Date(t.created_at);
   const exchange = symbolMeta[t.symbol]?.exchangeDisplay || '';
   const symbol = exchange ? `${t.symbol} (${exchange})` : t.symbol;
+  const ordPrice = t.execution_price ?? t.limit_price ?? t.market_price ?? null;
   return [
     t.side, symbol, t.qty,
+    ordPrice != null ? ordPrice.toFixed(2) : '',
+    ordPrice != null ? (ordPrice * t.qty).toFixed(2) : '',
     t.filled_qty != null ? t.filled_qty : '',
     t.execution_price != null ? t.execution_price.toFixed(2) : '',
-    t.execution_price != null ? t.execution_price.toFixed(2) : t.limit_price != null ? t.limit_price.toFixed(2) : '',
-    ((t.execution_price ?? t.limit_price ?? 0) * t.qty).toFixed(2),
-    t.market_price != null ? t.market_price.toFixed(2) : '',
-    t.market_price != null ? (t.market_price * t.qty).toFixed(2) : '',
     t.status,
     ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }),
     ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }),
@@ -130,9 +127,23 @@ export default function TradeBlotter({
   loading = false,
   symbolMeta = {},
   onRefresh = () => {},
+  onOpenTradePanel = () => {},
 }) {
   const [syncing, setSyncing] = useState(false);
   const [actionLoading, setActionLoading] = useState({});
+  const [tickerMeta, setTickerMeta] = useState({});
+
+  // Fetch ticker metadata for symbols in trades (once per unique symbol)
+  useEffect(() => {
+    const symbols = [...new Set(trades.map((t) => t.symbol))];
+    symbols.forEach(async (sym) => {
+      if (tickerMeta[sym]) return;
+      try {
+        const resp = await axios.get(`${API_BASE_URL}/tickers/${sym}`);
+        setTickerMeta((prev) => ({ ...prev, [sym]: resp.data }));
+      } catch { /* leave blank */ }
+    });
+  }, [trades]);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [hiddenCols, setHiddenCols] = useState(DEFAULT_HIDDEN);
   const [downloadOpen, setDownloadOpen] = useState(false);
@@ -166,12 +177,17 @@ export default function TradeBlotter({
     onRefresh();
   });
 
-  const handleQuickTrade = (trade, side) => withActionLoading(trade.id, async () => {
-    await axios.post(`${API_BASE_URL}/portfolio/trade-with-limits`, {
-      symbol: trade.symbol, side, qty: trade.qty, limit_price: null,
+  const handleQuickTrade = (trade, side) => {
+    const meta = tickerMeta[trade.symbol] || {};
+    onOpenTradePanel({
+      symbol: trade.symbol,
+      side: side.toUpperCase(),
+      qty: trade.qty,
+      name: meta.long_name || meta.name || trade.symbol,
+      exchangeDisplay: meta.exchange_display || null,
+      typeDisplay: meta.type_display || null,
     });
-    onRefresh();
-  });
+  };
 
   const syncTrades = async () => {
     setSyncing(true);
@@ -190,12 +206,12 @@ export default function TradeBlotter({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const HIDDEN_STATUSES = new Set(['expired', 'withdrawn']);
+  const HIDDEN_STATUSES = new Set(['expired', 'withdrawn', 'canceled']);
 
   const filtered = trades
     .filter((t) => !HIDDEN_STATUSES.has(t.status))
     .filter((t) => {
-      const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
+      const value = (t.execution_price ?? t.limit_price ?? t.market_price ?? 0) * t.qty;
       const ts = new Date(t.created_at);
       const dateStr = ts.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
       const timeStr = ts.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
@@ -206,10 +222,8 @@ export default function TradeBlotter({
         (!filters.qty       || contains(t.qty, filters.qty)) &&
         (!filters.filledQty || contains(String(t.filled_qty ?? ''), filters.filledQty)) &&
         (!filters.avgFill   || contains(fmt(t.execution_price || 0), filters.avgFill)) &&
-        (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? 0), filters.price)) &&
+        (!filters.price     || contains(fmt(t.execution_price ?? t.limit_price ?? t.market_price ?? 0), filters.price)) &&
         (!filters.value     || contains(fmt(value), filters.value)) &&
-        (!filters.mktPrice  || contains(fmt(t.market_price || 0), filters.mktPrice)) &&
-        (!filters.mktValue  || contains(fmt((t.market_price || 0) * t.qty), filters.mktValue)) &&
         (!filters.status    || contains(t.status, filters.status)) &&
         (!filters.date      || contains(`${dateStr} ${timeStr}`, filters.date)) &&
         (!filters.appTradeId || contains(t.id, filters.appTradeId)) &&
@@ -222,7 +236,7 @@ export default function TradeBlotter({
   const totalValue = filtered
     .filter((t) => _executedStatuses.has(t.status))
     .reduce(
-      (sum, t) => sum + (t.execution_price ?? t.limit_price ?? 0) * t.qty * (t.side === 'buy' ? 1 : -1),
+      (sum, t) => sum + (t.execution_price ?? t.limit_price ?? t.market_price ?? 0) * t.qty * (t.side === 'buy' ? -1 : 1),
       0
     );
 
@@ -384,7 +398,8 @@ export default function TradeBlotter({
               </div>
             ) : (
               filtered.map((t) => {
-                const value = (t.execution_price ?? t.limit_price ?? 0) * t.qty;
+                const ordPrice = t.execution_price ?? t.limit_price ?? t.market_price ?? null;
+                const value = (ordPrice ?? 0) * t.qty;
                 const ts = new Date(t.created_at);
                 return (
                   <div key={t.id}
@@ -409,8 +424,6 @@ export default function TradeBlotter({
                     ))}
 
                     {col('qty',       <span className="text-right text-slate-300">{t.qty}</span>)}
-                    {col('filledQty', <span className="text-right text-slate-300">{t.filled_qty != null ? t.filled_qty : '—'}</span>)}
-                    {col('avgFill',   <span className="text-right text-slate-300">{t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}</span>)}
 
                     {col('price', (
                       <span className="text-right text-slate-300">
@@ -418,13 +431,16 @@ export default function TradeBlotter({
                           ? `$${fmt(t.execution_price)}`
                           : t.limit_price != null
                             ? <span className="text-sky-400">${fmt(t.limit_price)} <span className="text-[9px] text-slate-500">lmt</span></span>
-                            : '—'}
+                            : t.market_price != null
+                              ? <span className="text-slate-400">${fmt(t.market_price)} <span className="text-[9px] text-slate-500">mkt</span></span>
+                              : '—'}
                       </span>
                     ))}
 
-                    {col('value',    <span className="text-right font-medium text-slate-200">${fmt(value)}</span>)}
-                    {col('mktPrice', <span className="text-right text-slate-400">{t.market_price != null ? `$${fmt(t.market_price)}` : '—'}</span>)}
-                    {col('mktValue', <span className="text-right text-slate-400">{t.market_price != null ? `$${fmt(t.market_price * t.qty)}` : '—'}</span>)}
+                    {col('value',    <span className="text-right font-medium text-slate-200">{ordPrice != null ? `$${fmt(value)}` : '—'}</span>)}
+
+                    {col('filledQty', <span className="text-right text-slate-300">{t.filled_qty != null ? t.filled_qty : '—'}</span>)}
+                    {col('avgFill',   <span className="text-right text-slate-300">{t.execution_price != null ? `$${fmt(t.execution_price)}` : '—'}</span>)}
 
                     {col('status', (
                       <span className={`text-center font-medium ${

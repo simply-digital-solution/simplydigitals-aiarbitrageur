@@ -88,6 +88,12 @@ export default function PortfolioSummary({
 
           <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4 space-y-2 text-sm">
             <div className="flex justify-between">
+              <span className="text-slate-400">Positions Value</span>
+              <span className="text-slate-200 font-medium">
+                ${fmt(positionsValue)}
+              </span>
+            </div>
+            <div className="flex justify-between border-t border-slate-700/50 pt-2">
               <span className="text-slate-400">Cash Available</span>
               <span className="text-emerald-400 font-medium">
                 {account.cash != null ? `$${fmt(account.cash)}` : '—'}

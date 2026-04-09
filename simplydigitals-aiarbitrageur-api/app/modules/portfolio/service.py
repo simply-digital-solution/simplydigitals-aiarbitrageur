@@ -228,7 +228,9 @@ class PortfolioService:
             )
 
         # Step 1 — persist trade immediately as "not_sent" before touching Alpaca
+        # Always use a limit price: explicit limit if provided, else current market price
         effective_price = req.limit_price if req.limit_price else float(current_price)
+        limit_price_to_use = effective_price  # always sent as limit to Alpaca
         trade_value = req.qty * effective_price
 
         account = await self._get_or_create_account(user_id)
@@ -276,7 +278,7 @@ class PortfolioService:
             symbol=symbol,
             side=req.side,
             qty=req.qty,
-            limit_price=req.limit_price,
+            limit_price=limit_price_to_use,
             market_price=float(current_price),
             status="not_sent",
         )
@@ -291,7 +293,7 @@ class PortfolioService:
                     symbol=symbol,
                     qty=req.qty,
                     side=req.side,
-                    limit_price=req.limit_price,
+                    limit_price=limit_price_to_use,
                 )
                 trade.order_id = order_info.order_id
                 # Alpaca acknowledged the order — mark as "reached"

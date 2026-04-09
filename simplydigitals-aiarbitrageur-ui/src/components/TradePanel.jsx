@@ -16,17 +16,18 @@ const STATUS_BORDER = {
   accepted: 'border-emerald-600 bg-emerald-900/20 text-emerald-200',
 };
 
-export default function TradePanel({ selectedSymbols }) {
+export default function TradePanel({ selectedSymbols, prefill = null, onPrefillConsumed = () => {} }) {
   const [formData, setFormData] = useState({
-    symbol: selectedSymbols[0] || '',
+    symbol: '',
     side: 'BUY',
-    qty: 10,
+    qty: 0,
     limitPrice: null,
     marketOrder: true,
   });
+  const [symbolInfo, setSymbolInfo] = useState(null); // { name, exchangeDisplay, typeDisplay }
 
   // Symbol search
-  const [symbolQuery, setSymbolQuery]           = useState(selectedSymbols[0] || '');
+  const [symbolQuery, setSymbolQuery]           = useState('');
   const [symbolResults, setSymbolResults]       = useState([]);
   const [symbolSearching, setSymbolSearching]   = useState(false);
   const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false);
@@ -48,6 +49,12 @@ export default function TradePanel({ selectedSymbols }) {
   // ── Symbol search: debounce 300ms ─────────────────────────────────────────
   useEffect(() => {
     if (symbolQuery.trim().length < 1) {
+      setSymbolResults([]);
+      setSymbolDropdownOpen(false);
+      return;
+    }
+    // Skip search if the query exactly matches the already-confirmed symbol
+    if (symbolQuery.trim().toUpperCase() === formData.symbol) {
       setSymbolResults([]);
       setSymbolDropdownOpen(false);
       return;
@@ -84,7 +91,27 @@ export default function TradePanel({ selectedSymbols }) {
     setSymbolQuery(ticker.symbol);
     setSymbolDropdownOpen(false);
     setSymbolResults([]);
+    setSymbolInfo({
+      name: ticker.name,
+      exchangeDisplay: ticker.exchange_display || null,
+      typeDisplay: ticker.type_display || null,
+    });
   };
+
+  // Apply prefill from Trade Blotter Buy/Sell action
+  useEffect(() => {
+    if (!prefill) return;
+    setFormData((prev) => ({ ...prev, symbol: prefill.symbol, side: prefill.side, qty: prefill.qty }));
+    setSymbolQuery(prefill.symbol);
+    setSymbolResults([]);
+    setSymbolDropdownOpen(false);
+    setSymbolInfo(prefill.name ? {
+      name: prefill.name,
+      exchangeDisplay: prefill.exchangeDisplay,
+      typeDisplay: prefill.typeDisplay,
+    } : null);
+    onPrefillConsumed();
+  }, [prefill]);
 
   // ── Price fetching ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -124,13 +151,6 @@ export default function TradePanel({ selectedSymbols }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Sync symbol field when watchlist selection changes
-  useEffect(() => {
-    if (selectedSymbols.length > 0 && !formData.symbol) {
-      setFormData((prev) => ({ ...prev, symbol: selectedSymbols[0] }));
-      setSymbolQuery(selectedSymbols[0]);
-    }
-  }, [selectedSymbols]);
 
   // ── Order metrics ──────────────────────────────────────────────────────────
   const currentPrice = prices[formData.symbol] ?? null;
@@ -164,10 +184,12 @@ export default function TradePanel({ selectedSymbols }) {
   })();
 
   const errors = [];
-  if (orderValue != null && orderValue > cash)
-    errors.push(`Order value ($${orderValue.toFixed(2)}) exceeds available cash ($${cash.toFixed(2)})`);
   if (!formData.symbol)
     errors.push('Select a symbol to trade');
+  if (!formData.qty || formData.qty <= 0)
+    errors.push('Enter a quantity greater than 0');
+  if (orderValue != null && orderValue > cash)
+    errors.push(`Order value ($${orderValue.toFixed(2)}) exceeds available cash ($${cash.toFixed(2)})`);
 
   // ── Status polling ─────────────────────────────────────────────────────────
   const pollTradeStatus = (tradeId, symbol, side, qty) => {
@@ -209,7 +231,7 @@ export default function TradePanel({ selectedSymbols }) {
       const trade = resp.data;
       setTradeStatus(trade.status);
       setSuccess(`${formData.side} ${formData.qty} ${formData.symbol} — ${STATUS_LABEL[trade.status] || trade.status}`);
-      setFormData((prev) => ({ ...prev, qty: 10, limitPrice: null, marketOrder: true }));
+      setFormData((prev) => ({ ...prev, qty: 0, limitPrice: null, marketOrder: true }));
       setShowLimitPriceInput(false);
       setLimitRawValue('');
       setLimitInputMode('$');
@@ -257,6 +279,7 @@ export default function TradePanel({ selectedSymbols }) {
                 onChange={(e) => {
                   setSymbolQuery(e.target.value);
                   setFormData((prev) => ({ ...prev, symbol: '' }));
+                  setSymbolInfo(null);
                 }}
                 onFocus={() => symbolResults.length > 0 && setSymbolDropdownOpen(true)}
                 placeholder="Search ticker or company name…"
@@ -295,13 +318,26 @@ export default function TradePanel({ selectedSymbols }) {
                 </div>
               )}
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              {formData.symbol
-                ? currentPrice != null
-                  ? `${formData.symbol} · Current: $${currentPrice.toFixed(2)}`
-                  : `${formData.symbol} · Price loading…`
-                : 'Type to search'}
-            </p>
+            <div className="mt-1 min-h-[1.25rem]">
+              {formData.symbol ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {symbolInfo?.name && (
+                    <span className="text-xs text-slate-300">{symbolInfo.name}</span>
+                  )}
+                  {symbolInfo?.exchangeDisplay && (
+                    <span className="text-[10px] text-sky-400">{symbolInfo.exchangeDisplay}</span>
+                  )}
+                  {symbolInfo?.typeDisplay && (
+                    <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">{symbolInfo.typeDisplay}</span>
+                  )}
+                  <span className="text-xs text-slate-500">
+                    {currentPrice != null ? `· $${currentPrice.toFixed(2)}` : '· Price loading…'}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Type to search</p>
+              )}
+            </div>
           </div>
 
           {/* Side */}
