@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime
-
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
+from datetime import UTC, datetime
 
 import yfinance as yf
 from fastapi import HTTPException, status
@@ -121,8 +114,8 @@ class TriggerService:
 
                 if trigger.action in ("buy", "sell") and trigger.qty:
                     # Import here to avoid circular imports
-                    from app.modules.portfolio.service import PortfolioService
                     from app.modules.portfolio.schemas import TradeWithLimitsRequest
+                    from app.modules.portfolio.service import PortfolioService
                     try:
                         svc = PortfolioService(db)
                         await svc.execute_trade_with_limits(
@@ -134,8 +127,13 @@ class TriggerService:
                             ),
                             trigger.user_id,
                         )
-                        logger.info("trigger_trade_executed", trigger_id=trigger.id, symbol=symbol, qty=trigger.qty)
+                        logger.info(
+                            "trigger_trade_executed",
+                            trigger_id=trigger.id, symbol=symbol, qty=trigger.qty,
+                        )
                     except Exception as exc:
-                        logger.warning("trigger_trade_failed", trigger_id=trigger.id, error=str(exc))
+                        logger.warning(
+                            "trigger_trade_failed", trigger_id=trigger.id, error=str(exc)
+                        )
 
         await db.commit()

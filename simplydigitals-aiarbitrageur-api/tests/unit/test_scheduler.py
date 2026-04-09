@@ -6,13 +6,13 @@ from __future__ import annotations
 def test_scheduler_job_functions() -> None:
     """Verify all scheduler job functions are defined."""
     from app.shared.scheduler import (
-        _job_fetch_intraday,
+        _job_evaluate_triggers,
         _job_fetch_closing,
-        _job_purge_intraday,
+        _job_fetch_intraday,
         _job_fetch_intraday_1min,
+        _job_purge_intraday,
         _job_purge_intraday_1min,
         _job_sync_positions,
-        _job_evaluate_triggers,
     )
 
     # All should be callable

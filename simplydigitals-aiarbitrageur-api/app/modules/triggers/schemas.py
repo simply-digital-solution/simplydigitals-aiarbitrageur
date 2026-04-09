@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -26,7 +26,7 @@ class TriggerCreate(_Base):
 
     @field_validator("qty")
     @classmethod
-    def qty_required_for_trade(cls, v: float | None, info) -> float | None:
+    def qty_required_for_trade(cls, v: float | None, info: Any) -> float | None:
         action = info.data.get("action")
         if action in ("buy", "sell") and (v is None or v <= 0):
             raise ValueError("qty is required for buy/sell actions")

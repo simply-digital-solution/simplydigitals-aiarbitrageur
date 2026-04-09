@@ -16,7 +16,7 @@ def test_trade_model_fields() -> None:
         "created_at",
         "executed_at",
     ]
-    
+
     for field in required_fields:
         assert field in trade_fields, f"Trade model missing field: {field}"
 
@@ -32,7 +32,7 @@ def test_trade_limit_model() -> None:
         "max_daily_loss_pct",
         "max_order_size_pct",
     ]
-    
+
     for field in expected:
         assert field in limit_fields, f"TradeLimit model missing field: {field}"
 

@@ -70,7 +70,23 @@ class TradeWithStatusRead(_Base):
     side: str
     qty: float
     limit_price: float | None
+    market_price: float | None
+    filled_qty: float | None
     execution_price: float | None
     status: str
     created_at: datetime
     executed_at: datetime | None
+
+
+class TradeHistoryRead(_Base):
+    id: str
+    symbol: str
+    side: str
+    qty: float
+    limit_price: float | None = None
+    market_price: float | None = None
+    filled_qty: float | None = None
+    execution_price: float | None
+    status: str
+    order_id: str | None = None
+    created_at: datetime

@@ -2,15 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 import uuid
-from datetime import datetime
-
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -50,4 +43,4 @@ class Trigger(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    ticker: Mapped["Ticker"] = relationship()  # type: ignore[name-defined]
+    ticker: Mapped[Ticker] = relationship()  # type: ignore[name-defined]

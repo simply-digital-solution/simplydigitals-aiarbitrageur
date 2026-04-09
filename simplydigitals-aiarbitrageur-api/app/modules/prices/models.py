@@ -2,15 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 import uuid
-from datetime import date, datetime
-
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -41,7 +34,7 @@ class ClosingPrice(Base):
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer)
 
-    ticker: Mapped["Ticker"] = relationship(back_populates="closing_prices")  # type: ignore[name-defined]
+    ticker: Mapped[Ticker] = relationship(back_populates="closing_prices")  # type: ignore[name-defined]
 
 
 class IntradayPrice(Base):
@@ -59,7 +52,7 @@ class IntradayPrice(Base):
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer)
 
-    ticker: Mapped["Ticker"] = relationship(back_populates="intraday_prices")  # type: ignore[name-defined]
+    ticker: Mapped[Ticker] = relationship(back_populates="intraday_prices")  # type: ignore[name-defined]
 
 
 class IntradayPrice1Min(Base):
@@ -77,4 +70,4 @@ class IntradayPrice1Min(Base):
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer)
 
-    ticker: Mapped["Ticker"] = relationship(back_populates="intraday_1min_prices")  # type: ignore[name-defined]
+    ticker: Mapped[Ticker] = relationship(back_populates="intraday_1min_prices")  # type: ignore[name-defined]

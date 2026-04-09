@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import yfinance as yf
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.broker.service import AlpacaBrokerService, AlpacaBrokerServiceError
-from app.modules.portfolio.models import PortfolioPosition, Trade, TradeLimit
+from app.modules.portfolio.models import PortfolioPosition, Trade, TradeLimit, UserAccount
 from app.modules.portfolio.schemas import PositionRead, TradeRequest, TradeWithLimitsRequest
 from app.shared.logging import get_logger
 
@@ -27,7 +29,13 @@ def _live_price(symbol: str) -> float | None:
 class PortfolioService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-        self.broker = AlpacaBrokerService()
+        self._broker: AlpacaBrokerService | None = None
+
+    @property
+    def broker(self) -> AlpacaBrokerService:
+        if self._broker is None:
+            self._broker = AlpacaBrokerService()
+        return self._broker
 
     async def get_portfolio(self, user_id: str) -> list[PositionRead]:
         result = await self.db.execute(
@@ -58,6 +66,9 @@ class PortfolioService:
 
     async def execute_trade(self, req: TradeRequest, user_id: str) -> Trade:
         symbol = req.symbol.upper()
+        account = await self._get_or_create_account(user_id)
+        trade_value = req.price * req.qty
+
         result = await self.db.execute(
             select(PortfolioPosition).where(
                 PortfolioPosition.user_id == user_id,
@@ -67,8 +78,13 @@ class PortfolioService:
         position = result.scalar_one_or_none()
 
         if req.side == "buy":
+            if account.cash < trade_value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient cash: have ${account.cash:.2f}, need ${trade_value:.2f}",
+                )
+            account.cash -= trade_value
             if position:
-                # Recalculate weighted average cost
                 total_cost = position.avg_cost * position.qty + req.price * req.qty
                 position.qty += req.qty
                 position.avg_cost = total_cost / position.qty
@@ -85,9 +101,13 @@ class PortfolioService:
             if not position or position.qty < req.qty:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Insufficient position: have {position.qty if position else 0}, selling {req.qty}",
+                    detail=(
+                    f"Insufficient position: have {position.qty if position else 0}, "
+                    f"selling {req.qty}"
+                ),
                 )
             position.qty -= req.qty
+            account.cash += trade_value
             if position.qty == 0:
                 await self.db.delete(position)
 
@@ -120,7 +140,7 @@ class PortfolioService:
         return limits
 
     async def _calculate_portfolio_exposure(self, user_id: str) -> dict[str, float]:
-        """Calculate total portfolio exposure and account value.
+        """Calculate total portfolio exposure and account value from local DB.
 
         Returns:
             {
@@ -129,20 +149,21 @@ class PortfolioService:
                 'cash': float,
             }
         """
-        try:
-            account = self.broker.get_account()
-            current_exposure = account.portfolio_value - account.cash
-            return {
-                "total_value": account.portfolio_value,
-                "current_exposure": max(current_exposure, 0),
-                "cash": account.cash,
-            }
-        except AlpacaBrokerServiceError as exc:
-            logger.error("portfolio_exposure_fetch_failed", error=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Failed to calculate portfolio exposure",
-            ) from exc
+        account = await self._get_or_create_account(user_id)
+        result = await self.db.execute(
+            select(PortfolioPosition).where(PortfolioPosition.user_id == user_id)
+        )
+        positions = list(result.scalars().all())
+        current_exposure = sum(
+            ((_live_price(p.symbol) or p.avg_cost) * p.qty)
+            for p in positions if p.qty > 0
+        )
+        total_value = account.cash + current_exposure
+        return {
+            "total_value": total_value,
+            "current_exposure": current_exposure,
+            "cash": account.cash,
+        }
 
     async def execute_trade_with_limits(
         self, req: TradeWithLimitsRequest, user_id: str
@@ -173,14 +194,19 @@ class PortfolioService:
             )
 
         # Estimate trade value
-        trade_value = req.qty * current_price if req.limit_price is None else req.qty * req.limit_price
+        trade_value = (
+            req.qty * current_price if req.limit_price is None else req.qty * req.limit_price
+        )
 
         # Check 1: Max order size
         max_order_value = total_value * (limits.max_order_size_pct / 100)
         if trade_value > max_order_value:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Order size ${trade_value:.2f} exceeds max allowed ${max_order_value:.2f} ({limits.max_order_size_pct}% of portfolio)",
+                detail=(
+                    f"Order size ${trade_value:.2f} exceeds max allowed "
+                    f"${max_order_value:.2f} ({limits.max_order_size_pct}% of portfolio)"
+                ),
             )
 
         # Check 2: Position exposure (simplified)
@@ -195,46 +221,338 @@ class PortfolioService:
         if after_trade_exposure > max_exposure:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Trade would result in {after_trade_exposure/total_value*100:.1f}% exposure (max {limits.max_position_exposure_pct}%)",
+                detail=(
+                    f"Trade would result in {after_trade_exposure / total_value * 100:.1f}% "
+                    f"exposure (max {limits.max_position_exposure_pct}%)"
+                ),
             )
 
-        # All limits passed; submit to Alpaca
-        try:
-            order_info = self.broker.submit_order(
-                symbol=symbol,
-                qty=req.qty,
-                side=req.side,
-                limit_price=req.limit_price,
-            )
+        # Step 1 — persist trade immediately as "not_sent" before touching Alpaca
+        # Always use a limit price: explicit limit if provided, else current market price
+        effective_price = req.limit_price if req.limit_price else float(current_price)
+        limit_price_to_use = effective_price  # always sent as limit to Alpaca
+        trade_value = req.qty * effective_price
 
-            # Store trade record with order tracking
-            trade = Trade(
-                user_id=user_id,
-                symbol=symbol,
-                order_id=order_info.order_id,
-                side=req.side,
-                qty=req.qty,
-                limit_price=req.limit_price,
-                status=order_info.status,
-                execution_price=order_info.filled_avg_price,
-            )
-            self.db.add(trade)
-            await self.db.flush()
+        account = await self._get_or_create_account(user_id)
 
+        pos_result = await self.db.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.user_id == user_id,
+                PortfolioPosition.symbol == symbol,
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+
+        if req.side == "buy":
+            if account.cash < trade_value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient cash: have ${account.cash:.2f}, need ${trade_value:.2f}",
+                )
+            account.cash -= trade_value
+            if position:
+                total_cost = position.avg_cost * position.qty + effective_price * req.qty
+                position.qty += req.qty
+                position.avg_cost = total_cost / position.qty
+            else:
+                position = PortfolioPosition(
+                    user_id=user_id, symbol=symbol, qty=req.qty, avg_cost=effective_price
+                )
+                self.db.add(position)
+        else:
+            if not position or position.qty < req.qty:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Insufficient position: have {position.qty if position else 0}, "
+                        f"selling {req.qty}"
+                    ),
+                )
+            position.qty -= req.qty
+            account.cash += trade_value
+            if position.qty == 0:
+                await self.db.delete(position)
+
+        trade = Trade(
+            user_id=user_id,
+            symbol=symbol,
+            side=req.side,
+            qty=req.qty,
+            limit_price=limit_price_to_use,
+            market_price=float(current_price),
+            status="not_sent",
+        )
+        self.db.add(trade)
+        await self.db.flush()
+        logger.info("trade_created_not_sent", trade_id=trade.id, symbol=symbol)
+
+        # Step 2 — send to Alpaca; update status to "reached" on ACK, "accepted" on fill
+        if self.broker._client is not None:
+            try:
+                order_info = self.broker.submit_order(
+                    symbol=symbol,
+                    qty=req.qty,
+                    side=req.side,
+                    limit_price=limit_price_to_use,
+                )
+                trade.order_id = order_info.order_id
+                # Alpaca acknowledged the order — mark as "reached"
+                trade.status = "reached"
+
+                # If Alpaca already filled it (market orders fill instantly)
+                if order_info.status == "filled":
+                    trade.status = "accepted"
+                    trade.filled_qty = order_info.filled_qty or req.qty
+                    trade.execution_price = order_info.filled_avg_price or effective_price
+                    trade.executed_at = datetime.now(UTC)
+
+                logger.info(
+                    "trade_sent_to_alpaca",
+                    trade_id=trade.id,
+                    order_id=trade.order_id,
+                    alpaca_status=order_info.status,
+                )
+            except AlpacaBrokerServiceError as exc:
+                # Trade stays as "not_sent" in DB — caller can retry
+                logger.error("alpaca_order_submit_failed", trade_id=trade.id, error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to submit order to Alpaca: {exc}",
+                ) from exc
+        else:
+            # No Alpaca client — paper trade fills immediately
+            trade.status = "accepted"
+            trade.filled_qty = req.qty
+            trade.execution_price = effective_price
+            trade.executed_at = datetime.now(UTC)
             logger.info(
-                "trade_with_limits_executed",
+                "trade_paper_accepted",
+                trade_id=trade.id,
                 symbol=symbol,
-                qty=req.qty,
-                side=req.side,
-                order_id=order_info.order_id,
+                reason="alpaca_unavailable",
             )
+
+        await self.db.flush()
+        return trade
+
+    async def refresh_trade_status(self, trade_id: str, user_id: str) -> Trade:
+        """Poll Alpaca for the latest order status and update the local trade record.
+
+        Status transitions:
+          not_sent → reached  (Alpaca acknowledged)
+          reached  → accepted (Alpaca filled)
+        """
+        result = await self.db.execute(
+            select(Trade).where(Trade.id == trade_id, Trade.user_id == user_id)
+        )
+        trade = result.scalar_one_or_none()
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        if not trade.order_id or self.broker._client is None:
             return trade
+
+        try:
+            order_info = self.broker.get_order_status(trade.order_id)
         except AlpacaBrokerServiceError as exc:
-            logger.error("alpaca_order_submit_failed", error=str(exc))
+            logger.warning("alpaca_status_poll_failed", trade_id=trade_id, error=str(exc))
+            return trade
+
+        _terminal_statuses = {"expired", "canceled", "done_for_day", "rejected", "replaced"}
+
+        if order_info.status == "filled" and trade.status != "accepted":
+            trade.status = "accepted"
+            trade.filled_qty = order_info.filled_qty or trade.qty
+            trade.execution_price = order_info.filled_avg_price or trade.execution_price
+            trade.executed_at = datetime.now(UTC)
+            logger.info("trade_accepted", trade_id=trade.id, order_id=trade.order_id)
+        elif order_info.status == "partially_filled":
+            trade.filled_qty = order_info.filled_qty
+            if trade.status == "not_sent":
+                trade.status = "reached"
+            logger.info(
+                "trade_partially_filled", trade_id=trade.id, filled_qty=order_info.filled_qty
+            )
+        elif order_info.status in ("accepted", "pending_new", "new"):
+            if trade.status == "not_sent":
+                trade.status = "reached"
+                logger.info("trade_reached", trade_id=trade.id, order_id=trade.order_id)
+        elif order_info.status in _terminal_statuses:
+            await self._reverse_trade_position(trade, user_id)
+            trade.status = order_info.status
+            logger.info(
+                "trade_terminal",
+                trade_id=trade.id,
+                order_id=trade.order_id,
+                alpaca_status=order_info.status,
+            )
+
+        await self.db.flush()
+        return trade
+
+    async def _reverse_trade_position(self, trade: Trade, user_id: str) -> None:
+        """Reverse the cash and position impact of a trade that did not fill.
+
+        Safe to call only for trades that were booked (cash/position already adjusted)
+        but never filled — e.g. expired, canceled, rejected orders.
+        """
+        # Use the best available price — execution fills first, then limit, then market
+        effective_price = trade.execution_price or trade.limit_price or trade.market_price or 0.0
+        trade_value = trade.qty * effective_price
+        account = await self._get_or_create_account(user_id)
+
+        pos_result = await self.db.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.user_id == user_id,
+                PortfolioPosition.symbol == trade.symbol,
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+
+        if trade.side == "buy":
+            account.cash += trade_value
+            if position:
+                position.qty -= trade.qty
+                if position.qty <= 0:
+                    await self.db.delete(position)
+        else:
+            account.cash -= trade_value
+            if position:
+                total_cost = position.avg_cost * position.qty + effective_price * trade.qty
+                position.qty += trade.qty
+                position.avg_cost = total_cost / position.qty
+            else:
+                position = PortfolioPosition(
+                    user_id=user_id,
+                    symbol=trade.symbol,
+                    qty=trade.qty,
+                    avg_cost=effective_price,
+                )
+                self.db.add(position)
+
+        logger.info(
+            "trade_position_reversed",
+            trade_id=trade.id,
+            symbol=trade.symbol,
+            side=trade.side,
+            qty=trade.qty,
+            cash_delta=trade_value if trade.side == "buy" else -trade_value,
+        )
+
+    async def refresh_open_trades(self, user_id: str) -> int:
+        """Poll Alpaca for all trades in not_sent/reached state and update statuses.
+
+        Returns the number of trades updated.
+        """
+        if self.broker._client is None:
+            return 0
+
+        # Include legacy Alpaca statuses (pending_new, new, accepted) that may have
+        # been written directly before the not_sent/reached lifecycle was introduced
+        _open_statuses = ["not_sent", "reached", "pending_new", "new", "accepted_for_bidding"]
+        result = await self.db.execute(
+            select(Trade).where(
+                Trade.user_id == user_id,
+                Trade.status.in_(_open_statuses),
+                Trade.order_id.isnot(None),
+            )
+        )
+        open_trades = list(result.scalars().all())
+        updated = 0
+        for trade in open_trades:
+            before = trade.status
+            await self.refresh_trade_status(trade.id, user_id)
+            if trade.status != before:
+                updated += 1
+
+        logger.info("open_trades_refreshed", checked=len(open_trades), updated=updated)
+        return updated
+
+    async def cancel_trade(self, trade_id: str, user_id: str) -> Trade:
+        """Cancel a trade that has not yet been accepted.
+
+        - Cancels on Alpaca if an order_id exists
+        - Reverses the local cash / position changes
+        - Marks the trade status as "canceled"
+        """
+        result = await self.db.execute(
+            select(Trade).where(Trade.id == trade_id, Trade.user_id == user_id)
+        )
+        trade = result.scalar_one_or_none()
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        _terminal = {"canceled", "withdrawn", "expired", "rejected"}
+        if trade.status in _terminal:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Failed to submit order: {exc}",
-            ) from exc
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot cancel a trade with status '{trade.status}'",
+            )
+        # Real accepted/filled trades on Alpaca cannot be withdrawn — only paper ones can
+        if trade.status in ("accepted", "filled") and trade.order_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot withdraw a trade that was executed on Alpaca",
+            )
+
+        # Cancel on Alpaca only if the order actually reached Alpaca
+        if trade.order_id and self.broker._client is not None:
+            try:
+                self.broker.cancel_order(trade.order_id)
+            except AlpacaBrokerServiceError as exc:
+                logger.error("alpaca_cancel_failed", trade_id=trade_id, error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Failed to cancel order on Alpaca: {exc}",
+                ) from exc
+
+        await self._reverse_trade_position(trade, user_id)
+
+        # "withdrawn" = never reached Alpaca; "canceled" = was on Alpaca and canceled
+        trade.status = "withdrawn" if not trade.order_id else "canceled"
+        await self.db.flush()
+        logger.info("trade_canceled", trade_id=trade.id, symbol=trade.symbol, status=trade.status)
+        return trade
+
+    async def _get_or_create_account(self, user_id: str) -> UserAccount:
+        result = await self.db.execute(
+            select(UserAccount).where(UserAccount.user_id == user_id)
+        )
+        account = result.scalar_one_or_none()
+        if account:
+            return account
+        account = UserAccount(user_id=user_id, cash=100_000.0)
+        self.db.add(account)
+        await self.db.flush()
+        return account
+
+    async def get_account_info(self, user_id: str) -> dict[str, object]:
+        account = await self._get_or_create_account(user_id)
+        result = await self.db.execute(
+            select(PortfolioPosition).where(PortfolioPosition.user_id == user_id)
+        )
+        positions = list(result.scalars().all())
+        positions_value = sum(
+            ((_live_price(p.symbol) or p.avg_cost) * p.qty)
+            for p in positions if p.qty > 0
+        )
+        portfolio_value = account.cash + positions_value
+        realized_pnl = portfolio_value - 100_000.0
+        return {
+            "cash": account.cash,
+            "buying_power": account.cash,
+            "portfolio_value": portfolio_value,
+            "realized_pnl": realized_pnl,
+        }
+
+    async def get_trades(self, user_id: str, limit: int = 50) -> list[Trade]:
+        result = await self.db.execute(
+            select(Trade)
+            .where(Trade.user_id == user_id)
+            .order_by(Trade.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def sync_positions_from_alpaca(self, user_id: str) -> None:
         """Fetch live positions from Alpaca and upsert to portfolio_positions table."""
@@ -251,11 +569,9 @@ class PortfolioService:
                 db_pos = result.scalar_one_or_none()
 
                 if db_pos:
-                    # Update existing position
                     db_pos.qty = pos.qty
                     db_pos.avg_cost = pos.avg_entry_price
                 else:
-                    # Create new position
                     db_pos = PortfolioPosition(
                         user_id=user_id,
                         symbol=pos.symbol,
@@ -271,4 +587,94 @@ class PortfolioService:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Failed to sync positions from Alpaca",
+            ) from exc
+
+    async def get_trade_sync_status(self, user_id: str) -> dict[str, object]:
+        """Compare Alpaca filled orders against local trades to detect divergence.
+
+        Returns:
+            {
+                "in_sync": bool,
+                "alpaca_count": int,        # filled orders in Alpaca
+                "local_count": int,         # locally tracked orders with an order_id
+                "missing_count": int,       # Alpaca orders absent from local DB
+                "alpaca_connected": bool,
+            }
+        """
+        if self.broker._client is None:
+            return {
+                "in_sync": True,
+                "alpaca_count": 0,
+                "local_count": 0,
+                "missing_count": 0,
+                "alpaca_connected": False,
+            }
+        try:
+            alpaca_orders = self.broker.get_orders(status="filled", limit=100)
+            alpaca_ids = {o.order_id for o in alpaca_orders}
+
+            existing_result = await self.db.execute(
+                select(Trade.order_id).where(
+                    Trade.user_id == user_id, Trade.order_id.isnot(None)
+                )
+            )
+            local_ids = {row[0] for row in existing_result.all()}
+
+            missing = alpaca_ids - local_ids
+            return {
+                "in_sync": len(missing) == 0,
+                "alpaca_count": len(alpaca_ids),
+                "local_count": len(local_ids),
+                "missing_count": len(missing),
+                "alpaca_connected": True,
+            }
+        except AlpacaBrokerServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to check sync status: {exc}",
+            ) from exc
+
+    async def sync_trades_from_alpaca(self, user_id: str) -> dict[str, object]:
+        """Import Alpaca filled orders that are not yet in the local trades table.
+
+        Only imports orders missing from local DB — existing records are untouched.
+        Returns the number of trades imported.
+        """
+        if self.broker._client is None:
+            return {"imported": 0, "alpaca_connected": False}
+        try:
+            alpaca_orders = self.broker.get_orders(status="filled", limit=100)
+
+            existing_result = await self.db.execute(
+                select(Trade.order_id).where(
+                    Trade.user_id == user_id, Trade.order_id.isnot(None)
+                )
+            )
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            imported = 0
+            for order in alpaca_orders:
+                if order.order_id in existing_ids:
+                    continue
+                self.db.add(
+                    Trade(
+                        user_id=user_id,
+                        symbol=order.symbol,
+                        order_id=order.order_id,
+                        side=order.side,
+                        qty=order.filled_qty,
+                        limit_price=order.limit_price,
+                        execution_price=order.filled_avg_price,
+                        status=order.status,
+                    )
+                )
+                imported += 1
+
+            await self.db.flush()
+            logger.info("trades_synced_from_alpaca", imported=imported)
+            return {"imported": imported, "alpaca_connected": True}
+        except AlpacaBrokerServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to sync trades: {exc}",
             ) from exc

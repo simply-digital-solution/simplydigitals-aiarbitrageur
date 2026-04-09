@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import AsyncGenerator
 from unittest.mock import MagicMock, patch
 
@@ -19,14 +18,14 @@ os.environ.setdefault("ALPACA_SECRET_KEY", "test-secret")
 
 # Create test database engine and session factory (with isolation_level=None for autocommit)
 _engine = create_async_engine(
-    "sqlite+aiosqlite:///:memory:", 
+    "sqlite+aiosqlite:///:memory:",
     echo=False,
     connect_args={"check_same_thread": False},
 )
 _TestSession = async_sessionmaker(
-    _engine, 
-    class_=AsyncSession, 
-    expire_on_commit=False, 
+    _engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
     autoflush=False,
 )
 
@@ -40,16 +39,14 @@ with patch("app.shared.logging.configure_logging"):
 def mock_structlog_logger() -> None:  # type: ignore[no-untyped-def]
     """Mock structlog to avoid PrintLogger name issues in tests."""
     import structlog
-    
+
     # Create a mock logger that ignores all calls
     mock_logger = MagicMock()
-    
-    original_get_logger = structlog.get_logger
-    
+
     def mock_get_logger(name: str = "") -> MagicMock:  # type: ignore[no-untyped-def]
         """Return our mock logger instead of creating real one."""
         return mock_logger
-    
+
     with patch.object(structlog, "get_logger", side_effect=mock_get_logger):
         yield
 
@@ -57,19 +54,20 @@ def mock_structlog_logger() -> None:  # type: ignore[no-untyped-def]
 @pytest.fixture(scope="session", autouse=True)
 async def setup_test_db() -> AsyncGenerator[None, None]:
     """Create tables once at session start, cleanup at session end."""
-    from app.shared.database import Base
+    from app.modules.portfolio import models as _pom  # noqa: F401
+    from app.modules.prices import models as _pm  # noqa: F401
+
     # Import all models so they're registered with Base
     from app.modules.tickers import models as _tm  # noqa: F401
-    from app.modules.prices import models as _pm   # noqa: F401
-    from app.modules.portfolio import models as _pom  # noqa: F401
     from app.modules.triggers import models as _trm  # noqa: F401
+    from app.shared.database import Base
 
     # Create all tables at session start
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     yield
-    
+
     # Clean up at session end
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -106,8 +104,8 @@ async def app(db_session: AsyncSession) -> AsyncGenerator:  # type: ignore[no-un
 @pytest.fixture(autouse=True)
 def mock_alpaca_broker() -> None:  # type: ignore[name-defined]
     """Mock Alpaca broker service to avoid API calls in tests."""
-    from app.modules.broker.service import AlpacaBrokerService, AccountInfo, PositionInfo, OrderInfo
-    
+    from app.modules.broker.service import AccountInfo, OrderInfo
+
     # Create a mock broker instance without spec to allow all methods
     mock_broker = MagicMock()
     mock_broker.get_account.return_value = AccountInfo(
@@ -128,7 +126,7 @@ def mock_alpaca_broker() -> None:  # type: ignore[name-defined]
         filled_avg_price=100.0,
     )
     mock_broker.cancel_order.return_value = None
-    
+
     with patch("app.modules.portfolio.service.AlpacaBrokerService", return_value=mock_broker):
         yield
 

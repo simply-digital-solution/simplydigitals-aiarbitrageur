@@ -8,10 +8,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.modules.portfolio.models import PortfolioPosition, Trade, UserAccount  # noqa: F401
+from app.modules.prices.models import ClosingPrice, IntradayPrice  # noqa: F401
+
 # Import all models so Alembic can discover metadata
 from app.modules.tickers.models import Ticker, WatchlistItem  # noqa: F401
-from app.modules.prices.models import ClosingPrice, IntradayPrice  # noqa: F401
-from app.modules.portfolio.models import PortfolioPosition, Trade  # noqa: F401
 from app.modules.triggers.models import Trigger  # noqa: F401
 from app.shared.config import get_settings
 from app.shared.database import Base

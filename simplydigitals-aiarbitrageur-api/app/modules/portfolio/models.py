@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-if sys.version_info >= (3, 11):
-    from datetime import UTC
-else:
-    from datetime import timezone
-    UTC = timezone.utc
-from typing import Literal
-
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.database import Base
@@ -38,7 +30,9 @@ class PortfolioPosition(Base):
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     avg_cost: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
 
 
 class Trade(Base):
@@ -50,16 +44,31 @@ class Trade(Base):
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     ticker_id: Mapped[str | None] = mapped_column(ForeignKey("tickers.id"), nullable=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
-    order_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)  # Alpaca order ID
+    order_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
     side: Mapped[str] = mapped_column(String(4), nullable=False)   # "buy" | "sell"
     qty: Mapped[float] = mapped_column(Float, nullable=False)
-    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)  # Limit price for the order
-    execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)  # Actual execution price
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/filled/cancelled/rejected
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    ticker: Mapped["Ticker"] = relationship()  # type: ignore[name-defined]
+    ticker: Mapped[Ticker] = relationship()  # type: ignore[name-defined]
+
+
+class UserAccount(Base):
+    """Per-user cash balance, updated on every trade."""
+
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    cash: Mapped[float] = mapped_column(Float, nullable=False, default=100000.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
 
 
 class TradeLimit(Base):
@@ -69,8 +78,10 @@ class TradeLimit(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
-    max_position_exposure_pct: Mapped[float] = mapped_column(Float, default=10.0)  # Max % of portfolio per position
-    max_daily_loss_pct: Mapped[float] = mapped_column(Float, default=5.0)  # Max daily loss % before blocking trades
-    max_order_size_pct: Mapped[float] = mapped_column(Float, default=2.0)  # Max order size as % of portfolio
+    max_position_exposure_pct: Mapped[float] = mapped_column(Float, default=10.0)
+    max_daily_loss_pct: Mapped[float] = mapped_column(Float, default=5.0)
+    max_order_size_pct: Mapped[float] = mapped_column(Float, default=2.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )

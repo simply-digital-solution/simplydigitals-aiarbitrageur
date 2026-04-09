@@ -72,22 +72,27 @@ class AlpacaBrokerService:
             )
             logger.info("alpaca_connected", base_url=self.settings.ALPACA_BASE_URL)
         except ImportError:
-            raise AlpacaBrokerServiceError("alpaca-trade-api package not installed")
+            logger.warning("alpaca_package_missing", hint="pip install alpaca-trade-api")
+            self._client = None
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to connect to Alpaca: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to connect to Alpaca: {exc}") from exc
 
     def get_account(self) -> AccountInfo:
         """Fetch account balance and buying power."""
+        if self._client is None:
+            raise AlpacaBrokerServiceError(
+                "Alpaca client not available (package not installed)"
+            )
         try:
             account = self._client.get_account()
             return AccountInfo(
-                account_value=float(account.account_value),
+                account_value=float(account.equity),
                 buying_power=float(account.buying_power),
                 cash=float(account.cash),
                 portfolio_value=float(account.portfolio_value),
             )
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to fetch account: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to fetch account: {exc}") from exc
 
     def get_positions(self) -> list[PositionInfo]:
         """Fetch all open positions."""
@@ -104,7 +109,7 @@ class AlpacaBrokerService:
                 for pos in positions
             ]
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to fetch positions: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to fetch positions: {exc}") from exc
 
     def submit_order(
         self,
@@ -130,6 +135,7 @@ class AlpacaBrokerService:
                 "qty": qty,
                 "side": side,
                 "type": "limit" if limit_price else "market",
+                "time_in_force": "gtc",  # Good Till Cancelled — survives market-closed periods
             }
             if limit_price:
                 order_params["limit_price"] = limit_price
@@ -155,7 +161,34 @@ class AlpacaBrokerService:
                 filled_avg_price=float(order.filled_avg_price) if order.filled_avg_price else None,
             )
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to submit order for {symbol}: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to submit order for {symbol}: {exc}") from exc
+
+    def get_orders(self, status: str = "filled", limit: int = 100) -> list[OrderInfo]:
+        """Fetch recent orders from Alpaca.
+
+        Args:
+            status: "filled", "open", "closed", or "all"
+            limit: Maximum number of orders to return
+        """
+        try:
+            orders = self._client.list_orders(status=status, limit=limit, direction="desc")
+            return [
+                OrderInfo(
+                    order_id=order.id,
+                    symbol=order.symbol,
+                    qty=float(order.qty),
+                    side=order.side,
+                    limit_price=float(order.limit_price) if order.limit_price else None,
+                    status=order.status,
+                    filled_qty=float(order.filled_qty),
+                    filled_avg_price=(
+                        float(order.filled_avg_price) if order.filled_avg_price else None
+                    ),
+                )
+                for order in orders
+            ]
+        except Exception as exc:
+            raise AlpacaBrokerServiceError(f"Failed to list orders: {exc}") from exc
 
     def cancel_order(self, order_id: str) -> None:
         """Cancel an open order."""
@@ -163,7 +196,7 @@ class AlpacaBrokerService:
             self._client.cancel_order(order_id)
             logger.info("order_cancelled", order_id=order_id)
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to cancel order {order_id}: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to cancel order {order_id}: {exc}") from exc
 
     def get_order_status(self, order_id: str) -> OrderInfo:
         """Fetch current status of an order."""
@@ -180,4 +213,4 @@ class AlpacaBrokerService:
                 filled_avg_price=float(order.filled_avg_price) if order.filled_avg_price else None,
             )
         except Exception as exc:
-            raise AlpacaBrokerServiceError(f"Failed to fetch order {order_id}: {exc}")
+            raise AlpacaBrokerServiceError(f"Failed to fetch order {order_id}: {exc}") from exc

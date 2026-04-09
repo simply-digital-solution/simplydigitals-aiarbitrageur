@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 DEFAULT_TRADER_ID = "default-trader"
 
 
